@@ -29,7 +29,6 @@ import java.security.NoSuchAlgorithmException;
 import java.util.UUID;
 
 @Service
-@Transactional
 @RequiredArgsConstructor
 public class MinioServiceImpl implements MinioService {
     private final MinioClient minioClient;
