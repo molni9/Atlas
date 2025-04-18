@@ -1,0 +1,21 @@
+services:
+  test:
+    image: test:latest
+    build:
+      context: .
+      args:
+        DOCKER_BUILDKIT: 1
+    restart: "no"
+    ports:
+      - "8060:8060"
+  minio:
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: vlados
+      MINIO_ROOT_PASSWORD: molni9
+    volumes:
+      - ~/minio/data:/data
+    command: server /data --console-address ":9001"
