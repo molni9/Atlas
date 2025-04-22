@@ -9,6 +9,9 @@ import org.springframework.stereotype.Component;
 @Configuration
 public class MinioConfig {
 
+    @Value("${minio.bucket}")
+    private String bucket;
+
     @Value("${minio.endpoint}")
     private String endpoint;
 

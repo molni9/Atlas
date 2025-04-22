@@ -1,39 +1,38 @@
 package beckand.test.Controller;
 
-import beckand.test.DTO.FileAttributesCreateDTO;
 import beckand.test.DTO.FileDTO;
-import beckand.test.Response.BaseResponse;
-import beckand.test.Response.TalentIdException;
-import beckand.test.Service.MinioService;
+import beckand.test.DTO.FileUploadRequest;
+import beckand.test.Service.FileService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 
 @RestController
-@RequestMapping("/api/files")
 @RequiredArgsConstructor
+@RequestMapping("/files")
+@Tag(name = "File Controller", description = "Операции с файлами: загрузка, удаление, информация")
 public class FileController {
 
-    private final MinioService minioService;
+    private final FileService fileService;
 
-    @PostMapping("/upload")
-    public BaseResponse<FileDTO> uploadFile(
-            @RequestParam("file") MultipartFile file,
-            @ModelAttribute FileAttributesCreateDTO createDTO,
-            BindingResult bindingResult,
-            @RequestHeader("Authorization") String token) throws TalentIdException {
-        return minioService.uploadFileToMinIO(file, createDTO, bindingResult, token);
+    @Operation(summary = "Загрузить файл", description = "Загружает файл с описанием")
+    @PostMapping(value = "/upload", consumes = {"multipart/form-data"})
+    public ResponseEntity<FileDTO> uploadFile(@ModelAttribute FileUploadRequest request) {
+        return ResponseEntity.ok(fileService.uploadFile(request));
     }
 
-    @GetMapping("/download/{fileId}")
-    public ResponseEntity<?> downloadFile(@PathVariable Integer fileId) throws TalentIdException {
-        return minioService.downloadFileFromMinIO(fileId);
+    @Operation(summary = "Удалить файл", description = "Удаляет файл по ID")
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteFile(@PathVariable Integer id) {
+        fileService.deleteFile(id);
+        return ResponseEntity.noContent().build();
     }
 
-    @DeleteMapping("/{fileId}")
-    public BaseResponse<String> deleteFile(@PathVariable Integer fileId) throws TalentIdException {
-        return minioService.deleteFileFromMinIO(fileId);
+    @Operation(summary = "Получить информацию о файле", description = "Возвращает информацию о файле по ID")
+    @GetMapping("/{id}")
+    public ResponseEntity<FileDTO> getFileInfo(@PathVariable Integer id) {
+        return ResponseEntity.ok(fileService.getFileInfo(id));
     }
 }

@@ -14,14 +14,9 @@ public class FileAttributes {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer fileAttributesId;
-
-    private UUID playerId;
     private String fileName;
     private String contentType;
     private Long size;
-    private String fileType;//
-    private Long fileSize;//
     private String description;
-    private String minioFileName;//
-    private String bucketName;//
+    private String s3ObjectKey;
 }
