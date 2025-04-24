@@ -9,6 +9,7 @@ public class FileMapper {
 
     public FileDTO toDTO(FileAttributes entity) {
         FileDTO fileDTO = new FileDTO();
+        fileDTO.setFileAttributesId(entity.getFileAttributesId());
         fileDTO.setFileName(entity.getFileName());
         fileDTO.setFileType(entity.getContentType());
         fileDTO.setFileSize(entity.getSize());

@@ -4,6 +4,7 @@ import lombok.Data;
 
 @Data
 public class FileDTO {
+    private Integer fileAttributesId;
     private String fileName;
     private String fileType;
     private Long fileSize;

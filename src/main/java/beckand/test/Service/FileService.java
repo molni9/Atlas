@@ -16,7 +16,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -86,7 +88,7 @@ public class FileService {
         try {
             minioClient.removeObject(RemoveObjectArgs.builder()
                     .bucket(bucket)
-                    .object(entity.getS3ObjectKey())  // Удаляем объект по ключу S3
+                    .object(entity.getS3ObjectKey())
                     .build());
 
             repository.delete(entity);
@@ -100,5 +102,11 @@ public class FileService {
                 .orElseThrow(() -> new RuntimeException("File not found"));
 
         return mapper.toDTO(entity);
+    }
+
+    public List<FileDTO> getAllFiles() {
+        return repository.findAll().stream()
+                .map(mapper::toDTO)
+                .collect(Collectors.toList());
     }
 }

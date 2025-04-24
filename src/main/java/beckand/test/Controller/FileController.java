@@ -3,11 +3,24 @@ package beckand.test.Controller;
 import beckand.test.DTO.FileDTO;
 import beckand.test.DTO.FileUploadRequest;
 import beckand.test.Service.FileService;
+import io.minio.GetObjectArgs;
+import io.minio.MinioClient;
+import io.minio.errors.MinioException;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.util.List;
 
 @RestController
 @RequiredArgsConstructor
@@ -16,6 +29,10 @@ import org.springframework.web.bind.annotation.*;
 public class FileController {
 
     private final FileService fileService;
+    private final MinioClient minioClient;
+
+    @Value("${minio.bucket}")
+    private String bucket;
 
     @Operation(summary = "Загрузить файл", description = "Загружает файл с описанием")
     @PostMapping(value = "/upload", consumes = {"multipart/form-data"})
@@ -25,14 +42,58 @@ public class FileController {
 
     @Operation(summary = "Удалить файл", description = "Удаляет файл по ID")
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteFile(@PathVariable Integer id) {
+    public ResponseEntity<Void> deleteFile(
+            @Parameter(description = "ID файла, который нужно удалить", required = true)
+            @PathVariable("id") Integer id
+    ) {
         fileService.deleteFile(id);
         return ResponseEntity.noContent().build();
     }
 
     @Operation(summary = "Получить информацию о файле", description = "Возвращает информацию о файле по ID")
     @GetMapping("/{id}")
-    public ResponseEntity<FileDTO> getFileInfo(@PathVariable Integer id) {
+    public ResponseEntity<FileDTO> getFileInfo(
+            @Parameter(description = "ID файла для получения информации", required = true)
+            @PathVariable("id") Integer id
+    ) {
         return ResponseEntity.ok(fileService.getFileInfo(id));
+    }
+
+    @Operation(summary = "Получить содержимое файла", description = "Возвращает содержимое файла по ID")
+    @GetMapping("/{id}/content")
+    public ResponseEntity<InputStreamResource> getFileContent(
+            @Parameter(description = "ID файла для получения содержимого", required = true)
+            @PathVariable("id") Integer id
+    ) {
+        try {
+            FileDTO fileInfo = fileService.getFileInfo(id);
+            
+            InputStream stream = minioClient.getObject(
+                    GetObjectArgs.builder()
+                            .bucket(bucket)
+                            .object(fileInfo.getS3ObjectKey())
+                            .build());
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(fileInfo.getFileType()))
+                    .header("Content-Disposition", "inline")
+                    .header("Access-Control-Allow-Origin", "*")
+                    .header("Access-Control-Allow-Methods", "GET")
+                    .body(new InputStreamResource(stream));
+        } catch (MinioException e) {
+            throw new RuntimeException("Error getting file content: " + e.getMessage(), e);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        } catch (InvalidKeyException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Operation(summary = "Получить список всех файлов", description = "Возвращает список всех файлов")
+    @GetMapping
+    public ResponseEntity<List<FileDTO>> getAllFiles() {
+        return ResponseEntity.ok(fileService.getAllFiles());
     }
 }
