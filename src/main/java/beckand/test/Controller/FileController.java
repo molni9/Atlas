@@ -3,6 +3,7 @@ package beckand.test.Controller;
 import beckand.test.DTO.FileDTO;
 import beckand.test.DTO.FileUploadRequest;
 import beckand.test.Service.FileService;
+import beckand.test.Service.RenderService;
 import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
 import io.minio.errors.MinioException;
@@ -30,6 +31,7 @@ public class FileController {
 
     private final FileService fileService;
     private final MinioClient minioClient;
+    private final RenderService renderService;
 
     @Value("${minio.bucket}")
     private String bucket;
@@ -95,5 +97,31 @@ public class FileController {
     @GetMapping
     public ResponseEntity<List<FileDTO>> getAllFiles() {
         return ResponseEntity.ok(fileService.getAllFiles());
+    }
+
+    @Operation(summary = "Получить рендер 3D модели", description = "Возвращает изображение рендера 3D модели")
+    @GetMapping("/{id}/render")
+    public ResponseEntity<byte[]> getModelRender(
+            @Parameter(description = "ID файла для рендеринга", required = true)
+            @PathVariable("id") Integer id,
+            @RequestParam(defaultValue = "0") double azimuth,
+            @RequestParam(defaultValue = "0") double elevation
+    ) {
+        try {
+            FileDTO fileInfo = fileService.getFileInfo(id);
+            // Получаем модель из MinIO
+            InputStream modelStream = minioClient.getObject(
+                    GetObjectArgs.builder()
+                            .bucket(bucket)
+                            .object(fileInfo.getS3ObjectKey())
+                            .build());
+            // Рендерим модель с учетом углов
+            byte[] imageData = renderService.renderModel(modelStream, fileInfo.getFileType(), azimuth, elevation);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.IMAGE_PNG)
+                    .body(imageData);
+        } catch (Exception e) {
+            throw new RuntimeException("Error rendering model: " + e.getMessage(), e);
+        }
     }
 }

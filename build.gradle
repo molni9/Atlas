@@ -9,7 +9,7 @@ version = '0.0.1-SNAPSHOT'
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(17)
+        languageVersion = JavaLanguageVersion.of(21)
     }
     withSourcesJar()
 }
@@ -22,6 +22,7 @@ configurations {
 
 repositories {
     mavenCentral()
+    maven { url "https://jogamp.org/deployment/maven/" } // для JOGL
 }
 
 dependencies {
@@ -43,18 +44,28 @@ dependencies {
     // Валидация Spring
     implementation 'org.springframework.boot:spring-boot-starter-validation'
 
-    // JWT (если используется ваша реализация)
+    // JWT
     implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.11.5'
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.11.5'
 
-    // Для работы с базой данных (если используется JPA)
+    // JPA + PostgreSQL
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     runtimeOnly 'org.postgresql:postgresql'
 
-    // MapStruct (если используется для маппинга DTO)
+    // MapStruct
     implementation 'org.mapstruct:mapstruct:1.5.5.Final'
     annotationProcessor 'org.mapstruct:mapstruct-processor:1.5.5.Final'
+
+    // JOGL (OpenGL для Java)
+    implementation 'org.jogamp.jogl:jogl-all-main:2.4.0'
+    implementation 'de.javagl:obj:0.3.0'
+    implementation 'org.jogamp.gluegen:gluegen-rt-main:2.4.0'
+
+    // Spring Security
+    //implementation 'org.springframework.boot:spring-boot-starter-security'
+
+
 }
 
 tasks.named('test') {
