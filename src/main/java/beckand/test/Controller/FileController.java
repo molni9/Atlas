@@ -4,14 +4,11 @@ import beckand.test.DTO.FileDTO;
 import beckand.test.DTO.FileUploadRequest;
 import beckand.test.Service.FileService;
 import beckand.test.Service.RenderService;
-import io.minio.GetObjectArgs;
-import io.minio.MinioClient;
-import io.minio.errors.MinioException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -19,10 +16,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
 import java.util.List;
 
+@Slf4j
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/files")
@@ -30,11 +26,7 @@ import java.util.List;
 public class FileController {
 
     private final FileService fileService;
-    private final MinioClient minioClient;
     private final RenderService renderService;
-
-    @Value("${minio.bucket}")
-    private String bucket;
 
     @Operation(summary = "Загрузить файл", description = "Загружает файл с описанием")
     @PostMapping(value = "/upload", consumes = {"multipart/form-data"})
@@ -42,39 +34,34 @@ public class FileController {
         return ResponseEntity.ok(fileService.uploadFile(request));
     }
 
-    @Operation(summary = "Удалить файл", description = "Удаляет файл по ID")
-    @DeleteMapping("/{id}")
+    @Operation(summary = "Удалить файл", description = "Удаляет файл по имени")
+    @DeleteMapping("/{objectKey}")
     public ResponseEntity<Void> deleteFile(
-            @Parameter(description = "ID файла, который нужно удалить", required = true)
-            @PathVariable("id") Integer id
+            @Parameter(description = "Имя файла для удаления", required = true)
+            @PathVariable("objectKey") String objectKey
     ) {
-        fileService.deleteFile(id);
+        fileService.deleteFile(objectKey);
         return ResponseEntity.noContent().build();
     }
 
-    @Operation(summary = "Получить информацию о файле", description = "Возвращает информацию о файле по ID")
-    @GetMapping("/{id}")
+    @Operation(summary = "Получить информацию о файле", description = "Возвращает информацию о файле по имени")
+    @GetMapping("/{objectKey}")
     public ResponseEntity<FileDTO> getFileInfo(
-            @Parameter(description = "ID файла для получения информации", required = true)
-            @PathVariable("id") Integer id
+            @Parameter(description = "Имя файла для получения информации", required = true)
+            @PathVariable("objectKey") String objectKey
     ) {
-        return ResponseEntity.ok(fileService.getFileInfo(id));
+        return ResponseEntity.ok(fileService.getFileInfo(objectKey));
     }
 
-    @Operation(summary = "Получить содержимое файла", description = "Возвращает содержимое файла по ID")
-    @GetMapping("/{id}/content")
+    @Operation(summary = "Получить содержимое файла", description = "Возвращает содержимое файла по имени")
+    @GetMapping("/{objectKey}/content")
     public ResponseEntity<InputStreamResource> getFileContent(
-            @Parameter(description = "ID файла для получения содержимого", required = true)
-            @PathVariable("id") Integer id
+            @Parameter(description = "Имя файла для получения содержимого", required = true)
+            @PathVariable("objectKey") String objectKey
     ) {
         try {
-            FileDTO fileInfo = fileService.getFileInfo(id);
-            
-            InputStream stream = minioClient.getObject(
-                    GetObjectArgs.builder()
-                            .bucket(bucket)
-                            .object(fileInfo.getS3ObjectKey())
-                            .build());
+            FileDTO fileInfo = fileService.getFileInfo(objectKey);
+            InputStream stream = fileService.getFileContent(objectKey);
 
             return ResponseEntity.ok()
                     .contentType(MediaType.parseMediaType(fileInfo.getFileType()))
@@ -82,14 +69,9 @@ public class FileController {
                     .header("Access-Control-Allow-Origin", "*")
                     .header("Access-Control-Allow-Methods", "GET")
                     .body(new InputStreamResource(stream));
-        } catch (MinioException e) {
+        } catch (Exception e) {
+            log.error("Error getting file content: {}", objectKey, e);
             throw new RuntimeException("Error getting file content: " + e.getMessage(), e);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        } catch (InvalidKeyException e) {
-            throw new RuntimeException(e);
         }
     }
 
@@ -100,27 +82,26 @@ public class FileController {
     }
 
     @Operation(summary = "Получить рендер 3D модели", description = "Возвращает изображение рендера 3D модели")
-    @GetMapping("/{id}/render")
+    @GetMapping("/{objectKey}/render")
     public ResponseEntity<byte[]> getModelRender(
-            @Parameter(description = "ID файла для рендеринга", required = true)
-            @PathVariable("id") Integer id,
+            @Parameter(description = "Имя файла для рендеринга", required = true)
+            @PathVariable("objectKey") String objectKey,
             @RequestParam(defaultValue = "0") double azimuth,
             @RequestParam(defaultValue = "0") double elevation
     ) {
         try {
-            FileDTO fileInfo = fileService.getFileInfo(id);
-            // Получаем модель из MinIO
-            InputStream modelStream = minioClient.getObject(
-                    GetObjectArgs.builder()
-                            .bucket(bucket)
-                            .object(fileInfo.getS3ObjectKey())
-                            .build());
-            // Рендерим модель с учетом углов
+            log.info("Rendering model: {}, azimuth: {}, elevation: {}", objectKey, azimuth, elevation);
+            FileDTO fileInfo = fileService.getFileInfo(objectKey);
+            InputStream modelStream = fileService.getFileContent(objectKey);
+            
             byte[] imageData = renderService.renderModel(modelStream, fileInfo.getFileType(), azimuth, elevation);
+            log.info("Model rendered successfully: {}", objectKey);
+            
             return ResponseEntity.ok()
                     .contentType(MediaType.IMAGE_PNG)
                     .body(imageData);
         } catch (Exception e) {
+            log.error("Error rendering model: {}", objectKey, e);
             throw new RuntimeException("Error rendering model: " + e.getMessage(), e);
         }
     }
