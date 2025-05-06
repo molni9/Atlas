@@ -10,10 +10,6 @@ RUN java -Djarmode=layertools -jar app.jar extract
 
 FROM bellsoft/liberica-openjre-debian:17.0.1
 VOLUME /tmp
-USER root
-RUN apt-get update && \
-    apt-get install -y xvfb libgl1-mesa-glx libglu1-mesa && \
-    rm -rf /var/lib/apt/lists/*
 RUN useradd -ms /bin/bash spring-user
 USER spring-user
 COPY --from=layers /application/dependencies/ ./
@@ -21,4 +17,4 @@ COPY --from=layers /application/spring-boot-loader/ ./
 COPY --from=layers /application/snapshot-dependencies/ ./
 COPY --from=layers /application/application/ ./
 
-ENTRYPOINT ["xvfb-run", "--auto-servernum", "java", "org.springframework.boot.loader.launch.JarLauncher"]
+ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
