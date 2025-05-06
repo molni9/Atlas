@@ -3,7 +3,6 @@ package beckand.test.Controller;
 import beckand.test.DTO.FileDTO;
 import beckand.test.DTO.FileUploadRequest;
 import beckand.test.Service.FileService;
-import beckand.test.Service.RenderService;
 import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
 import io.minio.errors.MinioException;
