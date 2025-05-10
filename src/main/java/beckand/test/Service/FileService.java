@@ -67,7 +67,7 @@ public class FileService {
             log.info("Deleting file: {}", objectKey);
             minioClient.removeObject(
                     RemoveObjectArgs.builder()
-                            .bucket(bucket)
+                    .bucket(bucket)
                             .object(objectKey)
                             .build()
             );
@@ -167,6 +167,6 @@ public class FileService {
         } catch (Exception e) {
             log.error("Failed to get file content: {}", objectKey, e);
             throw new RuntimeException("Failed to get file content: " + e.getMessage(), e);
-        }
     }
+}
 }
