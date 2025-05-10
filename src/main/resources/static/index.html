@@ -117,6 +117,9 @@
     let isDragging = false;
     let lastX, lastY;
     let currentModelId = null;
+    let renderCache = new Map();
+    const CACHE_ANGLE_STEP = 2; // шаг углов для кэша
+    const PRELOAD_RADIUS = 2; // сколько шагов в каждую сторону предзагружать
 
     const img = document.getElementById('modelImage');
     const viewer = document.getElementById('viewer');
@@ -132,6 +135,51 @@
 
     function setLoading(loading) {
         document.getElementById('loading').style.display = loading ? 'block' : 'none';
+    }
+
+    function getCacheKey(modelId, az, el) {
+        // Округляем углы до ближайших 2 градусов
+        const roundedAz = Math.round(az / CACHE_ANGLE_STEP) * CACHE_ANGLE_STEP;
+        const roundedEl = Math.round(el / CACHE_ANGLE_STEP) * CACHE_ANGLE_STEP;
+        return `${modelId}_${roundedAz}_${roundedEl}`;
+    }
+
+    async function loadRender(modelId, az, el) {
+        const key = getCacheKey(modelId, az, el);
+        if (renderCache.has(key)) {
+            return renderCache.get(key);
+        }
+        try {
+            const response = await fetch(`/files/${modelId}/render?azimuth=${az}&elevation=${el}`);
+            if (!response.ok) throw new Error('Failed to fetch render');
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            renderCache.set(key, url);
+            return url;
+        } catch (error) {
+            console.error('Error loading render:', error);
+            throw error;
+        }
+    }
+
+    function preloadNeighboringViews(modelId, az, el) {
+        for (let daz = -PRELOAD_RADIUS; daz <= PRELOAD_RADIUS; daz++) {
+            for (let del = -PRELOAD_RADIUS; del <= PRELOAD_RADIUS; del++) {
+                const newAz = az + daz * CACHE_ANGLE_STEP;
+                const newEl = el + del * CACHE_ANGLE_STEP;
+                if (newEl >= -89 && newEl <= 89) {
+                    const key = getCacheKey(modelId, newAz, newEl);
+                    if (!renderCache.has(key)) {
+                        loadRender(modelId, newAz, newEl);
+                    }
+                }
+            }
+        }
+    }
+
+    function clearCache() {
+        renderCache.forEach(url => URL.revokeObjectURL(url));
+        renderCache.clear();
     }
 
     function updateImage() {
@@ -160,10 +208,8 @@
         if (!isDragging) return;
         const dx = e.clientX - lastX;
         const dy = e.clientY - lastY;
-        azimuth += dx;
-        elevation -= dy;
-        if (elevation > 89) elevation = 89;
-        if (elevation < -89) elevation = -89;
+        azimuth -= dx * 0.5;
+        elevation -= dy * 0.5;
         lastX = e.clientX;
         lastY = e.clientY;
         updateImage();
@@ -195,6 +241,7 @@
                     currentModelId = model.s3ObjectKey;
                     azimuth = 0;
                     elevation = 0;
+                    clearCache();
                     updateImage();
                 };
                 modelList.appendChild(div);

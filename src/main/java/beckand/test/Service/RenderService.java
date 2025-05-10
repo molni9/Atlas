@@ -48,12 +48,12 @@ public class RenderService {
             System.setProperty("java.awt.headless", "true");
             GLProfile.initSingleton();
 
-            GLProfile profile = GLProfile.get(GLProfile.GL2);
+        GLProfile profile = GLProfile.get(GLProfile.GL2);
             if (profile == null) {
                 throw new RuntimeException("GL2 profile is not available");
             }
 
-            GLCapabilities capabilities = new GLCapabilities(profile);
+        GLCapabilities capabilities = new GLCapabilities(profile);
             capabilities.setHardwareAccelerated(true);
             capabilities.setDoubleBuffered(true);
             capabilities.setDepthBits(24);
@@ -74,8 +74,8 @@ public class RenderService {
             pixelBuffer.order(ByteOrder.nativeOrder());
 
             drawable.addGLEventListener(new GLEventListener() {
-                @Override
-                public void init(GLAutoDrawable drawable) {
+            @Override
+            public void init(GLAutoDrawable drawable) {
                     GL gl = drawable.getGL();
                     if (!(gl instanceof GL2)) {
                         throw new RuntimeException("GL2 is not available");
@@ -98,13 +98,13 @@ public class RenderService {
                     isInitialized = true;
                 }
 
-                @Override
+            @Override
                 public void dispose(GLAutoDrawable drawable) {
                     isInitialized = false;
                 }
 
-                @Override
-                public void display(GLAutoDrawable drawable) {
+            @Override
+            public void display(GLAutoDrawable drawable) {
                     if (!isRendering || !isInitialized) return;
 
                     GL gl = drawable.getGL();
@@ -151,23 +151,23 @@ public class RenderService {
                         gl2.glPushMatrix();
 
                         // Центрирование и масштабирование модели
-                        float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
-                        float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
+                    float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
+                    float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
 
                         for (int i = 0; i < currentModel.getNumVertices(); i++) {
                             FloatTuple v = currentModel.getVertex(i);
-                            minX = Math.min(minX, v.getX());
-                            minY = Math.min(minY, v.getY());
-                            minZ = Math.min(minZ, v.getZ());
-                            maxX = Math.max(maxX, v.getX());
-                            maxY = Math.max(maxY, v.getY());
-                            maxZ = Math.max(maxZ, v.getZ());
-                        }
+                        minX = Math.min(minX, v.getX());
+                        minY = Math.min(minY, v.getY());
+                        minZ = Math.min(minZ, v.getZ());
+                        maxX = Math.max(maxX, v.getX());
+                        maxY = Math.max(maxY, v.getY());
+                        maxZ = Math.max(maxZ, v.getZ());
+                    }
 
-                        float centerX = (minX + maxX) / 2f;
-                        float centerY = (minY + maxY) / 2f;
-                        float centerZ = (minZ + maxZ) / 2f;
-                        float maxDim = Math.max(maxX - minX, Math.max(maxY - minY, maxZ - minZ));
+                    float centerX = (minX + maxX) / 2f;
+                    float centerY = (minY + maxY) / 2f;
+                    float centerZ = (minZ + maxZ) / 2f;
+                    float maxDim = Math.max(maxX - minX, Math.max(maxY - minY, maxZ - minZ));
                         float scale = 2.0f / maxDim;
 
                         gl2.glScalef(scale, scale, scale);
@@ -178,14 +178,14 @@ public class RenderService {
                         gl2.glBegin(GL2.GL_TRIANGLES);
                         for (int i = 0; i < currentModel.getNumFaces(); i++) {
                             ObjFace face = currentModel.getFace(i);
-                            if (face.getNumVertices() == 3) {
-                                for (int j = 0; j < 3; j++) {
-                                    int idx = face.getVertexIndex(j);
+                        if (face.getNumVertices() == 3) {
+                            for (int j = 0; j < 3; j++) {
+                                int idx = face.getVertexIndex(j);
                                     FloatTuple vertex = currentModel.getVertex(idx);
                                     gl2.glVertex3f(vertex.getX(), vertex.getY(), vertex.getZ());
-                                }
                             }
                         }
+                    }
                         gl2.glEnd();
                         gl2.glPopMatrix();
                     }
@@ -232,8 +232,8 @@ public class RenderService {
         } catch (Exception e) {
             log.error("Failed to initialize OpenGL", e);
             throw new RuntimeException("Failed to initialize OpenGL: " + e.getMessage(), e);
-        }
-    }
+                    }
+                }
 
     public byte[] renderModel(InputStream modelStream, String fileType, double azimuth, double elevation) throws IOException {
         if (!isInitialized) {
@@ -257,8 +257,8 @@ public class RenderService {
                 } catch (Exception e) {
                     log.error("Failed to load OBJ file", e);
                     throw new RuntimeException("Ошибка чтения OBJ: " + e.getMessage(), e);
-                }
-            });
+            }
+        });
 
             // Обновление целевых углов
             targetAzimuth = (float) azimuth;
@@ -272,8 +272,8 @@ public class RenderService {
                 while (!renderComplete && System.currentTimeMillis() - startTime < 5000) {
                     try {
                         renderLock.wait(100);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
                         throw new IOException("Rendering was interrupted", e);
                     }
                 }
