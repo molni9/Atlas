@@ -46,24 +46,30 @@ public class RenderService {
     private ByteBuffer pixelBuffer;
 
     public RenderService() {
+        log.info("Initializing RenderService...");
         try {
             // Настройка headless режима
+            log.info("Setting up headless mode...");
             System.setProperty("java.awt.headless", "true");
             System.setProperty("jogamp.gluegen.UseTempJarCache", "false");
             System.setProperty("jogamp.gluegen.UseTempJarCache", "false");
             System.setProperty("jogamp.gluegen.UseTempJarCache", "false");
             
             // Инициализация OpenGL
+            log.info("Initializing OpenGL...");
             GLProfile.initSingleton();
             
             // Получение профиля GL2
-            GLProfile profile = GLProfile.getMaximum(true);
+            log.info("Getting OpenGL profile...");
+            GLProfile profile = GLProfile.get(GLProfile.GL2);
             if (profile == null) {
-                throw new RuntimeException("No OpenGL profile available");
+                log.error("GL2 profile is not available");
+                throw new RuntimeException("GL2 profile is not available");
             }
             
             log.info("Using OpenGL profile: {}", profile.getName());
             
+            log.info("Setting up GLCapabilities...");
             GLCapabilities capabilities = new GLCapabilities(profile);
             capabilities.setHardwareAccelerated(true);
             capabilities.setDoubleBuffered(true);
@@ -72,6 +78,7 @@ public class RenderService {
             capabilities.setNumSamples(4);
 
             // Создание offscreen drawable
+            log.info("Creating offscreen drawable...");
             GLDrawableFactory factory = GLDrawableFactory.getFactory(profile);
             drawable = factory.createOffscreenAutoDrawable(
                     null,
@@ -82,19 +89,24 @@ public class RenderService {
             );
 
             // Предварительно выделяем буфер для пикселей
+            log.info("Allocating pixel buffer...");
             pixelBuffer = ByteBuffer.allocateDirect(WIDTH * HEIGHT * 4);
             pixelBuffer.order(ByteOrder.nativeOrder());
 
+            log.info("Adding GLEventListener...");
             drawable.addGLEventListener(new GLEventListener() {
                 @Override
                 public void init(GLAutoDrawable drawable) {
+                    log.info("Initializing GL context...");
                     try {
                         GL gl = drawable.getGL();
                         if (!(gl instanceof GL2)) {
+                            log.error("GL2 is not available");
                             throw new RuntimeException("GL2 is not available");
                         }
                         GL2 gl2 = gl.getGL2();
                         
+                        log.info("Setting up GL context...");
                         gl2.glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
                         gl2.glEnable(GL2.GL_DEPTH_TEST);
                         gl2.glEnable(GL2.GL_LIGHTING);
@@ -118,8 +130,8 @@ public class RenderService {
 
                 @Override
                 public void dispose(GLAutoDrawable drawable) {
+                    log.info("Disposing GL context...");
                     isInitialized = false;
-                    log.info("OpenGL context disposed");
                 }
 
                 @Override
@@ -129,6 +141,7 @@ public class RenderService {
                     try {
                         GL gl = drawable.getGL();
                         if (!(gl instanceof GL2)) {
+                            log.error("GL2 is not available in display");
                             return;
                         }
                         GL2 gl2 = gl.getGL2();
@@ -237,6 +250,7 @@ public class RenderService {
                     try {
                         GL gl = drawable.getGL();
                         if (!(gl instanceof GL2)) {
+                            log.error("GL2 is not available in reshape");
                             return;
                         }
                         GL2 gl2 = gl.getGL2();
@@ -247,19 +261,26 @@ public class RenderService {
                 }
             });
 
+            log.info("Creating GLU...");
             glu = new GLU();
+            
+            log.info("Starting animator...");
             animator = new FPSAnimator(drawable, FPS);
             animator.start();
 
             // Ждем инициализации OpenGL контекста
+            log.info("Waiting for OpenGL context initialization...");
             long startTime = System.currentTimeMillis();
             while (!isInitialized && System.currentTimeMillis() - startTime < 5000) {
                 Thread.sleep(100);
             }
 
             if (!isInitialized) {
+                log.error("Failed to initialize OpenGL context after timeout");
                 throw new RuntimeException("Failed to initialize OpenGL context");
             }
+            
+            log.info("RenderService initialized successfully");
         } catch (Exception e) {
             log.error("Failed to initialize OpenGL", e);
             throw new RuntimeException("Failed to initialize OpenGL: " + e.getMessage(), e);

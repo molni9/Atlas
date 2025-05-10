@@ -16,7 +16,14 @@ RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libgl1-mesa-dri \
     xvfb \
+    mesa-utils \
+    libglu1-mesa \
     && rm -rf /var/lib/apt/lists/*
+
+# Проверка установленных библиотек
+RUN ldconfig && \
+    glxinfo | grep "OpenGL vendor" && \
+    glxinfo | grep "OpenGL version"
 
 RUN useradd -ms /bin/bash spring-user
 USER spring-user
@@ -26,4 +33,4 @@ COPY --from=layers /application/snapshot-dependencies/ ./
 COPY --from=layers /application/application/ ./
 
 # Запуск Xvfb перед приложением
-ENTRYPOINT ["sh", "-c", "Xvfb :1 -screen 0 1024x768x24 & export DISPLAY=:1 && java org.springframework.boot.loader.launch.JarLauncher"]
+ENTRYPOINT ["sh", "-c", "Xvfb :1 -screen 0 1024x768x24 & export DISPLAY=:1 && java -Djava.awt.headless=true -Djavax.media.opengl.useThreadedGL=true -Djavax.media.opengl.useThreadedGLX=true org.springframework.boot.loader.launch.JarLauncher"]
