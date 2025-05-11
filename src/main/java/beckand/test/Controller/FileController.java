@@ -94,7 +94,7 @@ public class FileController {
             FileDTO fileInfo = fileService.getFileInfo(objectKey);
             InputStream modelStream = fileService.getFileContent(objectKey);
             
-            byte[] imageData = renderService.renderModel(modelStream, fileInfo.getFileType(), azimuth, elevation);
+            byte[] imageData = renderService.renderModel(objectKey, modelStream, fileInfo.getFileType(), azimuth, elevation);
             log.info("Model rendered successfully: {}", objectKey);
             
             return ResponseEntity.ok()

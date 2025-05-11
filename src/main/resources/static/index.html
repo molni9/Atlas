@@ -120,6 +120,7 @@
     let renderCache = new Map();
     const CACHE_ANGLE_STEP = 2; // шаг углов для кэша
     const PRELOAD_RADIUS = 2; // сколько шагов в каждую сторону предзагружать
+    let isModelLoading = false;
 
     const img = document.getElementById('modelImage');
     const viewer = document.getElementById('viewer');
@@ -182,15 +183,30 @@
         renderCache.clear();
     }
 
+    function setModelSelectionEnabled(enabled) {
+        document.querySelectorAll('.model-item').forEach(el => {
+            el.style.pointerEvents = enabled ? 'auto' : 'none';
+            el.style.opacity = enabled ? '1' : '0.5';
+        });
+    }
+
     function updateImage() {
         if (!currentModelId) return;
         setLoading(true);
+        isModelLoading = true;
+        setModelSelectionEnabled(false);
         img.src = `/files/${currentModelId}/render?azimuth=${azimuth}&elevation=${elevation}&_=${Date.now()}`;
     }
 
-    img.onload = () => setLoading(false);
+    img.onload = () => {
+        setLoading(false);
+        isModelLoading = false;
+        setModelSelectionEnabled(true);
+    };
     img.onerror = () => {
         setLoading(false);
+        isModelLoading = false;
+        setModelSelectionEnabled(true);
         showError('Ошибка загрузки рендера');
     };
 
@@ -236,12 +252,15 @@
                 div.textContent = model.fileName || 'Unnamed Model';
                 div.setAttribute('data-model-id', model.s3ObjectKey);
                 div.onclick = () => {
+                    if (isModelLoading) return; // Блокируем повторный выбор, пока не загрузится
                     document.querySelectorAll('.model-item').forEach(el => el.classList.remove('active'));
                     div.classList.add('active');
                     currentModelId = model.s3ObjectKey;
                     azimuth = 0;
                     elevation = 0;
                     clearCache();
+                    setLoading(true);
+                    setModelSelectionEnabled(false);
                     updateImage();
                 };
                 modelList.appendChild(div);

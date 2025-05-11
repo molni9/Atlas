@@ -128,17 +128,44 @@ public class RenderService {
 
                     while (currentAzimuth > 360) currentAzimuth -= 360;
                     while (currentAzimuth < 0) currentAzimuth += 360;
-                    currentElevation = Math.max(-90, Math.min(90, currentElevation));
+                    currentElevation = Math.max(-80, Math.min(80, currentElevation));
 
                     // Настройка проекции
                     gl2.glMatrixMode(GL2.GL_PROJECTION);
                     gl2.glLoadIdentity();
                     glu.gluPerspective(45.0, (double) WIDTH / HEIGHT, 0.1, 100.0);
 
-                    // Настройка камеры
+                    // Динамический радиус камеры
                     gl2.glMatrixMode(GL2.GL_MODELVIEW);
                     gl2.glLoadIdentity();
-                    double radius = 5.0;
+                    float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
+                    float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
+                    if (currentModel != null) {
+                        for (int i = 0; i < currentModel.getNumVertices(); i++) {
+                            FloatTuple v = currentModel.getVertex(i);
+                            minX = Math.min(minX, v.getX());
+                            minY = Math.min(minY, v.getY());
+                            minZ = Math.min(minZ, v.getZ());
+                            maxX = Math.max(maxX, v.getX());
+                            maxY = Math.max(maxY, v.getY());
+                            maxZ = Math.max(maxZ, v.getZ());
+                        }
+                    }
+                    float centerX = (minX + maxX) / 2f;
+                    float centerY = (minY + maxY) / 2f;
+                    float centerZ = (minZ + maxZ) / 2f;
+                    float maxDim = Math.max(maxX - minX, Math.max(maxY - minY, maxZ - minZ));
+                    log.info("minX={}, maxX={}, minY={}, maxY={}, minZ={}, maxZ={}, maxDim={}", minX, maxX, minY, maxY, minZ, maxZ, maxDim);
+
+                    // Настройка камеры
+                    currentElevation = Math.max(-80, Math.min(80, currentElevation));
+                    gl2.glMatrixMode(GL2.GL_PROJECTION);
+                    gl2.glLoadIdentity();
+                    glu.gluPerspective(45.0, (double) WIDTH / HEIGHT, 0.1, 100.0);
+
+                    gl2.glMatrixMode(GL2.GL_MODELVIEW);
+                    gl2.glLoadIdentity();
+                    double radius = maxDim * 1.5 + 1.0;
                     double az = Math.toRadians(currentAzimuth);
                     double el = Math.toRadians(currentElevation);
                     double x = radius * Math.cos(el) * Math.sin(az);
@@ -147,45 +174,22 @@ public class RenderService {
                     glu.gluLookAt(x, y, z, 0, 0, 0, 0, 1, 0);
 
                     // Отрисовка модели
+                    float offsetY = 0.3f; // увеличивай для большего смещения вниз
                     if (currentModel != null) {
                         gl2.glPushMatrix();
-
-                        // Центрирование и масштабирование модели
-                    float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
-                    float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
-
-                        for (int i = 0; i < currentModel.getNumVertices(); i++) {
-                            FloatTuple v = currentModel.getVertex(i);
-                        minX = Math.min(minX, v.getX());
-                        minY = Math.min(minY, v.getY());
-                        minZ = Math.min(minZ, v.getZ());
-                        maxX = Math.max(maxX, v.getX());
-                        maxY = Math.max(maxY, v.getY());
-                        maxZ = Math.max(maxZ, v.getZ());
-                    }
-
-                    float centerX = (minX + maxX) / 2f;
-                    float centerY = (minY + maxY) / 2f;
-                    float centerZ = (minZ + maxZ) / 2f;
-                    float maxDim = Math.max(maxX - minX, Math.max(maxY - minY, maxZ - minZ));
-                        float scale = 2.0f / maxDim;
-
-                        gl2.glScalef(scale, scale, scale);
-                        gl2.glTranslatef(-centerX, -centerY, -centerZ);
-
-                        // Отрисовка треугольников
+                        gl2.glTranslatef(-centerX, -centerY - offsetY, -centerZ);
                         gl2.glColor3f(0.7f, 0.7f, 0.7f);
                         gl2.glBegin(GL2.GL_TRIANGLES);
                         for (int i = 0; i < currentModel.getNumFaces(); i++) {
                             ObjFace face = currentModel.getFace(i);
-                        if (face.getNumVertices() == 3) {
-                            for (int j = 0; j < 3; j++) {
-                                int idx = face.getVertexIndex(j);
+                            if (face.getNumVertices() == 3) {
+                                for (int j = 0; j < 3; j++) {
+                                    int idx = face.getVertexIndex(j);
                                     FloatTuple vertex = currentModel.getVertex(idx);
                                     gl2.glVertex3f(vertex.getX(), vertex.getY(), vertex.getZ());
+                                }
                             }
                         }
-                    }
                         gl2.glEnd();
                         gl2.glPopMatrix();
                     }
@@ -235,7 +239,7 @@ public class RenderService {
                     }
                 }
 
-    public byte[] renderModel(InputStream modelStream, String fileType, double azimuth, double elevation) throws IOException {
+    public byte[] renderModel(String objectKey, InputStream modelStream, String fileType, double azimuth, double elevation) throws IOException {
         if (!isInitialized) {
             throw new IOException("OpenGL context is not initialized");
         }
@@ -246,9 +250,9 @@ public class RenderService {
 
         try {
             // Загрузка или получение модели из кэша
-            currentModel = modelCache.computeIfAbsent("current_model", key -> {
+            currentModel = modelCache.computeIfAbsent(objectKey, key -> {
                 try {
-                    log.info("Loading new OBJ model");
+                    log.info("Loading new OBJ model: {}", objectKey);
                     Obj obj = ObjReader.read(modelStream);
                     if (obj.getNumFaces() == 0 || obj.getNumVertices() == 0) {
                         throw new IOException("Модель не содержит вершин или граней");
@@ -257,8 +261,8 @@ public class RenderService {
                 } catch (Exception e) {
                     log.error("Failed to load OBJ file", e);
                     throw new RuntimeException("Ошибка чтения OBJ: " + e.getMessage(), e);
-            }
-        });
+                }
+            });
 
             // Обновление целевых углов
             targetAzimuth = (float) azimuth;
@@ -272,8 +276,8 @@ public class RenderService {
                 while (!renderComplete && System.currentTimeMillis() - startTime < 5000) {
                     try {
                         renderLock.wait(100);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
                         throw new IOException("Rendering was interrupted", e);
                     }
                 }
