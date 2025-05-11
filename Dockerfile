@@ -10,6 +10,19 @@ RUN java -Djarmode=layertools -jar app.jar extract
 
 FROM bellsoft/liberica-openjre-debian:21
 VOLUME /tmp
+
+# Установка необходимых OpenGL библиотек
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libgl1-mesa-dri \
+    libglu1-mesa \
+    libx11-6 \
+    libxext6 \
+    libxrender1 \
+    libxtst6 \
+    libxi6 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd -ms /bin/bash spring-user
 USER spring-user
 COPY --from=layers /application/dependencies/ ./
