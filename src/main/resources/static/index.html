@@ -179,8 +179,9 @@
             ws.close();
         }
         setLoading(true);
+
+        // Возвращаем обычный WebSocket
         ws = new WebSocket(`ws://${window.location.host}/ws/render/${modelId}`);
-        
         ws.binaryType = 'blob';
         
         ws.onopen = () => {

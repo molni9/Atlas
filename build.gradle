@@ -63,7 +63,10 @@ dependencies {
     implementation 'de.javagl:obj:0.3.0'
     implementation 'org.jogamp.gluegen:gluegen-rt-main:2.4.0'
 
-
+    // Jakarta WebSocket API
+    implementation 'jakarta.websocket:jakarta.websocket-api:2.1.1'
+    implementation 'org.apache.tomcat.embed:tomcat-embed-websocket:10.1.19'
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
 }
 
 tasks.named('test') {

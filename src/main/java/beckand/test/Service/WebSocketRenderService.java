@@ -1,27 +1,24 @@
 package beckand.test.Service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.socket.BinaryMessage;
-import org.springframework.web.socket.CloseStatus;
-import org.springframework.web.socket.TextMessage;
-import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
-import org.springframework.web.socket.server.ServerEndpoint;
-import org.springframework.web.socket.server.annotation.OnMessage;
+import io.minio.MinioClient;
+import io.minio.GetObjectArgs;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
-@ServerEndpoint("/websocket")
 public class WebSocketRenderService extends TextWebSocketHandler {
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final RenderService renderService;
@@ -29,8 +26,12 @@ public class WebSocketRenderService extends TextWebSocketHandler {
     private double lastAzimuth = 0.0;
     private double lastElevation = 0.0;
     private String currentModelId;
+
+    @Autowired
+    private MinioClient minioClient;
+
+    @Value("${minio.bucket}")
     private String bucketName;
-    private S3Client s3Client;
 
     @Autowired
     public WebSocketRenderService(RenderService renderService) {
@@ -42,9 +43,10 @@ public class WebSocketRenderService extends TextWebSocketHandler {
         String modelId = extractModelId(session);
         if (modelId != null) {
             sessions.put(session.getId(), session);
+            currentModelId = modelId;
             log.info("WebSocket соединение установлено для модели: {}, sessionId: {}", modelId, session.getId());
             
-            // Отправляем начальное изображение сразу после установки соединения
+            // Отправляем начальное изображение
             try {
                 byte[] modelData = renderService.getModelData(modelId);
                 if (modelData != null) {
@@ -52,8 +54,8 @@ public class WebSocketRenderService extends TextWebSocketHandler {
                         modelId,
                         new ByteArrayInputStream(modelData),
                         "obj",
-                        0.0,  // начальный азимут
-                        0.0   // начальная высота
+                        0.0,
+                        0.0
                     );
                     session.sendMessage(new BinaryMessage(imageData));
                     log.info("Отправлено начальное изображение");
@@ -71,14 +73,14 @@ public class WebSocketRenderService extends TextWebSocketHandler {
         }
     }
 
-    @OnMessage
-    public void handleMessage(String message, Session session) {
+    @Override
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) {
         try {
-            JsonNode jsonNode = objectMapper.readTree(message);
+            JsonNode jsonNode = objectMapper.readTree(message.getPayload());
             double azimuth = jsonNode.get("azimuth").asDouble();
             double elevation = jsonNode.get("elevation").asDouble();
             
-            log.info("Получено WebSocket сообщение: {}", message);
+            log.info("Получено WebSocket сообщение: {}", message.getPayload());
             log.info("Обработка позиции: azimuth={}, elevation={}", azimuth, elevation);
 
             // Проверяем, достаточно ли изменились углы
@@ -86,27 +88,31 @@ public class WebSocketRenderService extends TextWebSocketHandler {
                 lastAzimuth = azimuth;
                 lastElevation = elevation;
                 
-                // Получаем модель из S3
-                S3Object s3Object = s3Client.getObject(bucketName, currentModelId);
-                try (InputStream modelStream = s3Object.getObjectContent()) {
+                // Получаем модель из MinIO
+                try (var inputStream = minioClient.getObject(
+                    GetObjectArgs.builder()
+                        .bucket(bucketName)
+                        .object(currentModelId)
+                        .build()
+                )) {
                     // Рендерим модель
                     byte[] imageData = renderService.renderModel(
                         currentModelId,
-                        modelStream,
+                        inputStream,
                         "obj",
                         azimuth,
                         elevation
                     );
                     
                     // Отправляем изображение клиенту
-                    session.getBasicRemote().sendBinary(ByteBuffer.wrap(imageData));
+                    session.sendMessage(new BinaryMessage(imageData));
                     log.info("Изображение отправлено клиенту, размер: {} байт", imageData.length);
                 }
             }
         } catch (Exception e) {
             log.error("Ошибка обработки WebSocket сообщения", e);
             try {
-                session.getBasicRemote().sendText("Ошибка: " + e.getMessage());
+                session.sendMessage(new TextMessage("Ошибка: " + e.getMessage()));
             } catch (IOException ex) {
                 log.error("Ошибка отправки сообщения об ошибке", ex);
             }
@@ -117,6 +123,12 @@ public class WebSocketRenderService extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         sessions.remove(session.getId());
         log.info("WebSocket соединение закрыто: sessionId={}, status={}", session.getId(), status);
+    }
+
+    @Override
+    public void handleTransportError(WebSocketSession session, Throwable exception) {
+        log.error("WebSocket ошибка для sessionId={}: {}", session.getId(), exception.getMessage());
+        sessions.remove(session.getId());
     }
 
     private String extractModelId(WebSocketSession session) {
