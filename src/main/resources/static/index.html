@@ -67,6 +67,9 @@
             object-fit: contain;
             user-select: none;
             cursor: grab;
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: crisp-edges;
+            will-change: transform;
         }
         #loading {
             position: fixed;
@@ -117,16 +120,15 @@
     let isDragging = false;
     let lastX, lastY;
     let currentModelId = null;
-    let isModelLoading = false;
     let ws = null;
     let lastUpdateTime = 0;
-    const UPDATE_INTERVAL = 32; // Увеличиваем интервал до ~30fps для стабильности
+    const UPDATE_INTERVAL = 16;  // ~60fps для максимальной плавности
     let animationFrameId = null;
     let lastSentAzimuth = 0;
     let lastSentElevation = 0;
-    const MIN_ANGLE_CHANGE = 0.5; // Увеличиваем минимальное изменение угла
-    let pendingImage = null;
+    const MIN_ANGLE_CHANGE = 0.1;  // Минимальное изменение угла
     let isImageLoading = false;
+    let pendingUpdate = false;
 
     const img = document.getElementById('modelImage');
     const viewer = document.getElementById('viewer');
@@ -144,34 +146,45 @@
         document.getElementById('loading').style.display = loading ? 'block' : 'none';
     }
 
+    function updateImage() {
+        if (!ws || ws.readyState !== WebSocket.OPEN || isImageLoading) {
+            return;
+        }
+
+        const now = Date.now();
+        if (now - lastUpdateTime >= UPDATE_INTERVAL) {
+            if (Math.abs(azimuth - lastSentAzimuth) > MIN_ANGLE_CHANGE || 
+                Math.abs(elevation - lastSentElevation) > MIN_ANGLE_CHANGE) {
+                
+                const message = JSON.stringify({ 
+                    azimuth: Math.round(azimuth * 10) / 10,
+                    elevation: Math.round(elevation * 10) / 10
+                });
+                ws.send(message);
+                lastSentAzimuth = azimuth;
+                lastSentElevation = elevation;
+                lastUpdateTime = now;
+                isImageLoading = true;
+            }
+        }
+    }
+
     function startContinuousUpdate() {
         if (animationFrameId) return;
         
         function update() {
-            if (ws && ws.readyState === WebSocket.OPEN && !isImageLoading) {
-                const now = Date.now();
-                if (now - lastUpdateTime >= UPDATE_INTERVAL) {
-                    // Проверяем, достаточно ли изменились углы
-                    if (Math.abs(azimuth - lastSentAzimuth) > MIN_ANGLE_CHANGE || 
-                        Math.abs(elevation - lastSentElevation) > MIN_ANGLE_CHANGE) {
-                        sendPosition();
-                        lastSentAzimuth = azimuth;
-                        lastSentElevation = elevation;
-                        lastUpdateTime = now;
-                    }
-                }
-            }
+            updateImage();
             animationFrameId = requestAnimationFrame(update);
         }
         
         animationFrameId = requestAnimationFrame(update);
     }
 
-    function stopContinuousUpdate() {
-        if (animationFrameId) {
-            cancelAnimationFrame(animationFrameId);
-            animationFrameId = null;
-        }
+    function setModelSelectionEnabled(enabled) {
+        document.querySelectorAll('.model-item').forEach(el => {
+            el.style.pointerEvents = enabled ? 'auto' : 'none';
+            el.style.opacity = enabled ? '1' : '0.5';
+        });
     }
 
     function connectWebSocket(modelId) {
@@ -179,8 +192,8 @@
             ws.close();
         }
         setLoading(true);
+        setModelSelectionEnabled(false);
 
-        // Возвращаем обычный WebSocket
         ws = new WebSocket(`ws://${window.location.host}/ws/render/${modelId}`);
         ws.binaryType = 'blob';
         
@@ -193,30 +206,16 @@
         
         ws.onmessage = (event) => {
             if (event.data instanceof Blob) {
-                isImageLoading = true;
                 const blob = event.data;
                 const url = URL.createObjectURL(blob);
                 
-                const tempImg = new Image();
-                tempImg.onload = () => {
-                    if (img.src.startsWith('blob:')) {
-                        URL.revokeObjectURL(img.src);
-                    }
-                    img.src = url;
-                    setLoading(false);
-                    isModelLoading = false;
-                    setModelSelectionEnabled(true);
-                    isImageLoading = false;
-                };
-                tempImg.onerror = () => {
-                    console.error("Ошибка загрузки изображения");
-                    setLoading(false);
-                    isModelLoading = false;
-                    setModelSelectionEnabled(true);
-                    isImageLoading = false;
-                    showError('Ошибка загрузки рендера');
-                };
-                tempImg.src = url;
+                const img = document.getElementById('modelImage');
+                if (img.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(img.src);
+                }
+                img.src = url;
+                isImageLoading = false;
+                setModelSelectionEnabled(true);
             }
         };
         
@@ -224,55 +223,25 @@
             console.error("WebSocket ошибка:", error);
             showError("Ошибка соединения с сервером");
             setLoading(false);
-            stopContinuousUpdate();
+            setModelSelectionEnabled(true);
         };
         
         ws.onclose = () => {
             console.log("WebSocket соединение закрыто");
-            setLoading(false);
             stopContinuousUpdate();
+            setLoading(false);
+            setModelSelectionEnabled(true);
         };
-    }
-
-    function sendPosition() {
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-            return;
-        }
-
-        const message = JSON.stringify({ 
-            azimuth: Math.round(azimuth * 10) / 10, // Округляем до 1 знака
-            elevation: Math.round(elevation * 10) / 10
-        });
-        ws.send(message);
-    }
-
-    function setModelSelectionEnabled(enabled) {
-        document.querySelectorAll('.model-item').forEach(el => {
-            el.style.pointerEvents = enabled ? 'auto' : 'none';
-            el.style.opacity = enabled ? '1' : '0.5';
-        });
-    }
-
-    function updateImage() {
-        if (!currentModelId) {
-            console.log("Нет выбранной модели");
-            return;
-        }
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-            console.log("WebSocket не готов");
-            return;
-        }
-        sendPosition();
     }
 
     img.onload = () => {
         setLoading(false);
-        isModelLoading = false;
+        isImageLoading = false;
         setModelSelectionEnabled(true);
     };
     img.onerror = () => {
         setLoading(false);
-        isModelLoading = false;
+        isImageLoading = false;
         setModelSelectionEnabled(true);
         showError('Ошибка загрузки рендера');
     };
@@ -280,7 +249,7 @@
     // Обработчики событий мыши
     viewer.addEventListener('mousedown', (e) => {
         e.preventDefault();
-        if (isModelLoading) return;
+        if (isImageLoading) return;
         
         isDragging = true;
         lastX = e.clientX;
@@ -293,19 +262,21 @@
             isDragging = false;
             img.style.cursor = 'grab';
             // Отправляем финальную позицию
-            sendPosition();
+            updateImage();
         }
     });
 
+    // Оптимизированный обработчик движения мыши
     window.addEventListener('mousemove', (e) => {
-        if (!isDragging || isModelLoading || isImageLoading) return;
+        if (!isDragging || isImageLoading) return;
         
         const dx = e.clientX - lastX;
         const dy = e.clientY - lastY;
         
-        // Уменьшаем чувствительность еще больше
-        azimuth -= dx * 0.1;
-        elevation -= dy * 0.1;
+        // Уменьшаем чувствительность для более плавного вращения
+        const sensitivity = 0.2;
+        azimuth -= dx * sensitivity;
+        elevation -= dy * sensitivity;
         
         // Ограничиваем угол наклона
         elevation = Math.max(-80, Math.min(80, elevation));
@@ -328,7 +299,7 @@
         if (isDragging) {
             isDragging = false;
             img.style.cursor = 'grab';
-            sendPosition();
+            updateImage();
         }
     });
 
@@ -337,7 +308,7 @@
         if (isDragging) {
             isDragging = false;
             img.style.cursor = 'grab';
-            sendPosition();
+            updateImage();
         }
     });
 
@@ -359,6 +330,7 @@
             const noModelsDiv = document.getElementById('noModels');
             if (models.length === 0) {
                 noModelsDiv.textContent = 'No 3D models found';
+                setModelSelectionEnabled(true);
                 return;
             }
             noModelsDiv.style.display = 'none';
@@ -394,6 +366,7 @@
             }
         } catch (error) {
             showError('Ошибка загрузки списка моделей: ' + error.message);
+            setModelSelectionEnabled(true);
         }
     }
 

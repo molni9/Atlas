@@ -16,6 +16,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 @Slf4j
 @Service
@@ -26,6 +29,9 @@ public class WebSocketRenderService extends TextWebSocketHandler {
     private double lastAzimuth = 0.0;
     private double lastElevation = 0.0;
     private String currentModelId;
+    private byte[] currentModelData;
+    private static final double MIN_ANGLE_CHANGE = 0.1;  // Уменьшаем для более плавного вращения
+    private static final long RENDER_TIMEOUT = 100;  // Таймаут рендеринга в мс
 
     @Autowired
     private MinioClient minioClient;
@@ -44,27 +50,35 @@ public class WebSocketRenderService extends TextWebSocketHandler {
         if (modelId != null) {
             sessions.put(session.getId(), session);
             currentModelId = modelId;
-            log.info("WebSocket соединение установлено для модели: {}, sessionId: {}", modelId, session.getId());
             
-            // Отправляем начальное изображение
             try {
-                byte[] modelData = renderService.getModelData(modelId);
-                if (modelData != null) {
-                    byte[] imageData = renderService.renderModel(
-                        modelId,
-                        new ByteArrayInputStream(modelData),
-                        "obj",
-                        0.0,
-                        0.0
-                    );
-                    session.sendMessage(new BinaryMessage(imageData));
-                    log.info("Отправлено начальное изображение");
-                }
+                // Загружаем модель один раз при подключении
+                currentModelData = minioClient.getObject(
+                    GetObjectArgs.builder()
+                        .bucket(bucketName)
+                        .object(modelId)
+                        .build()
+                ).readAllBytes();
+                
+                // Отправляем начальное изображение
+                byte[] imageData = renderService.renderModel(
+                    modelId,
+                    new ByteArrayInputStream(currentModelData),
+                    "obj",
+                    0.0,
+                    0.0
+                );
+                session.sendMessage(new BinaryMessage(imageData));
+                
             } catch (Exception e) {
-                log.error("Ошибка при отправке начального изображения", e);
+                log.error("Ошибка при установке соединения", e);
+                try {
+                    session.close(CloseStatus.SERVER_ERROR);
+                } catch (IOException ex) {
+                    log.error("Error closing WebSocket session", ex);
+                }
             }
         } else {
-            log.error("Не удалось установить WebSocket соединение: неверный modelId");
             try {
                 session.close(CloseStatus.BAD_DATA.withReason("Invalid model ID"));
             } catch (IOException e) {
@@ -80,49 +94,39 @@ public class WebSocketRenderService extends TextWebSocketHandler {
             double azimuth = jsonNode.get("azimuth").asDouble();
             double elevation = jsonNode.get("elevation").asDouble();
             
-            log.info("Получено WebSocket сообщение: {}", message.getPayload());
-            log.info("Обработка позиции: azimuth={}, elevation={}", azimuth, elevation);
-
-            // Проверяем, достаточно ли изменились углы
-            if (Math.abs(lastAzimuth - azimuth) > 0.5 || Math.abs(lastElevation - elevation) > 0.5) {
+            // Проверяем минимальное изменение угла
+            if (Math.abs(lastAzimuth - azimuth) > MIN_ANGLE_CHANGE || 
+                Math.abs(lastElevation - elevation) > MIN_ANGLE_CHANGE) {
+                
                 lastAzimuth = azimuth;
                 lastElevation = elevation;
                 
-                // Получаем модель из MinIO
-                try (var inputStream = minioClient.getObject(
-                    GetObjectArgs.builder()
-                        .bucket(bucketName)
-                        .object(currentModelId)
-                        .build()
-                )) {
-                    // Рендерим модель
+                // Используем сохраненные данные модели
+                if (currentModelData != null) {
                     byte[] imageData = renderService.renderModel(
                         currentModelId,
-                        inputStream,
+                        new ByteArrayInputStream(currentModelData),
                         "obj",
                         azimuth,
                         elevation
                     );
                     
-                    // Отправляем изображение клиенту
                     session.sendMessage(new BinaryMessage(imageData));
-                    log.info("Изображение отправлено клиенту, размер: {} байт", imageData.length);
                 }
             }
         } catch (Exception e) {
             log.error("Ошибка обработки WebSocket сообщения", e);
-            try {
-                session.sendMessage(new TextMessage("Ошибка: " + e.getMessage()));
-            } catch (IOException ex) {
-                log.error("Ошибка отправки сообщения об ошибке", ex);
-            }
         }
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         sessions.remove(session.getId());
-        log.info("WebSocket соединение закрыто: sessionId={}, status={}", session.getId(), status);
+        if (sessions.isEmpty()) {
+            // Очищаем данные модели только если нет активных соединений
+            currentModelData = null;
+            currentModelId = null;
+        }
     }
 
     @Override
@@ -138,5 +142,12 @@ public class WebSocketRenderService extends TextWebSocketHandler {
             return parts[parts.length - 1];
         }
         return null;
+    }
+
+    // Добавляем метод для проверки валидности углов
+    private boolean isValidAngles(double azimuth, double elevation) {
+        return !Double.isNaN(azimuth) && !Double.isNaN(elevation) &&
+               !Double.isInfinite(azimuth) && !Double.isInfinite(elevation) &&
+               elevation >= -80 && elevation <= 80;
     }
 } 

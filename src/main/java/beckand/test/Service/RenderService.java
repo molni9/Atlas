@@ -27,10 +27,13 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Service
 public class RenderService {
-    private static final int WIDTH = 800;
-    private static final int HEIGHT = 600;
-    private static final int FPS = 30;
-    private static final float MIN_ANGLE_CHANGE = 0.5f;
+    private static final int WIDTH = 1024;
+    private static final int HEIGHT = 768;
+    private static final int FPS = 60;
+    private static final float MIN_ANGLE_CHANGE = 0.1f;  // Уменьшаем для более плавного вращения
+    private static final int MAX_RENDER_SIZE = 2048;  // Максимальный размер рендера
+    private static final int MAX_CACHE_SIZE = 50;     // Уменьшаем размер кэша
+    private static final long MAX_RENDER_TIME = 500;  // Максимальное время рендеринга в мс
 
     private final Map<String, Obj> modelCache = new ConcurrentHashMap<>();
     private GLAutoDrawable drawable;
@@ -51,6 +54,9 @@ public class RenderService {
     private float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
     private float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
     private float centerX = 0, centerY = 0, centerZ = 0;
+
+    // Добавляем кэш для рендеров
+    private final Map<String, byte[]> renderCache = new ConcurrentHashMap<>();
 
     @Autowired
     private MinioClient minioClient;
@@ -288,49 +294,35 @@ public class RenderService {
         }
 
         try {
-            // Загрузка или получение модели из кэша
+            // Загружаем модель только если она изменилась
             if (!objectKey.equals(currentModelId)) {
-                currentModel = modelCache.computeIfAbsent(objectKey, key -> {
-                    try {
-                        log.info("Загрузка новой OBJ модели: {}", objectKey);
-                        Obj obj = ObjReader.read(modelStream);
-                        if (obj.getNumFaces() == 0 || obj.getNumVertices() == 0) {
-                            throw new IOException("Модель не содержит вершин или граней");
-                        }
-                        log.info("Модель загружена: {} вершин, {} граней", obj.getNumVertices(), obj.getNumFaces());
-                        return obj;
-                    } catch (Exception e) {
-                        log.error("Failed to load OBJ file", e);
-                        throw new RuntimeException("Ошибка чтения OBJ: " + e.getMessage(), e);
-                    }
-                });
+                currentModel = ObjReader.read(modelStream);
+                if (currentModel.getNumFaces() == 0 || currentModel.getNumVertices() == 0) {
+                    throw new IOException("Модель не содержит вершин или граней");
+                }
                 currentModelId = objectKey;
                 updateModelBounds();
             }
 
-            // Обновление целевых углов
-            targetAzimuth = (float) azimuth;
-            targetElevation = (float) elevation;
+            // Обновляем углы
+            currentAzimuth = (float) azimuth;
+            currentElevation = (float) elevation;
             needsRender = true;
 
-            // Ожидание завершения рендеринга
+            // Ждем завершения рендеринга
             synchronized (renderLock) {
                 renderComplete = false;
-                long startTime = System.currentTimeMillis();
-                while (!renderComplete && System.currentTimeMillis() - startTime < 200) { // Увеличиваем таймаут
+                while (!renderComplete) {
                     try {
-                        renderLock.wait(10);
+                        renderLock.wait(10);  // Уменьшаем время ожидания
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         throw new IOException("Rendering was interrupted", e);
                     }
                 }
-                if (!renderComplete) {
-                    log.warn("Rendering timeout for model: {}", objectKey);
-                }
             }
 
-            // Создание изображения из буфера
+            // Создаем изображение из буфера
             BufferedImage image = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
             int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
 
@@ -353,6 +345,13 @@ public class RenderService {
         }
     }
 
+    private boolean isValidAngles(double azimuth, double elevation) {
+        return !Double.isNaN(azimuth) && !Double.isNaN(elevation) &&
+               !Double.isInfinite(azimuth) && !Double.isInfinite(elevation) &&
+               elevation >= -80 && elevation <= 80 &&
+               azimuth >= 0 && azimuth <= 360;
+    }
+
     public byte[] getModelData(String objectKey) {
         try {
             return minioClient.getObject(
@@ -365,5 +364,17 @@ public class RenderService {
             log.error("Error getting model data from MinIO", e);
             return null;
         }
+    }
+
+    // Добавляем метод очистки кэша
+    public void clearRenderCache() {
+        renderCache.clear();
+    }
+
+    // Добавляем метод для очистки всех кэшей
+    public void clearAllCaches() {
+        modelCache.clear();
+        renderCache.clear();
+        log.info("All caches cleared");
     }
 }
