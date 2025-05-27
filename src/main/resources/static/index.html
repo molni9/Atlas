@@ -122,15 +122,12 @@
     let isImageLoading = false;
     
     // Константы для настройки движения
-    const MOUSE_SENSITIVITY = 0.2; // Уменьшаем чувствительность
-    const VELOCITY_DECAY = 0.92; // Увеличиваем затухание
-    const MIN_VELOCITY = 0.001; // Увеличиваем минимальную скорость
-    const MAX_VELOCITY = 2.0; // Уменьшаем максимальную скорость
-    const INTERPOLATION_SPEED = 0.15; // Уменьшаем скорость интерполяции
-    const UPDATE_INTERVAL = 32; // Увеличиваем интервал обновления
-    const MIN_ANGLE_CHANGE = 0.1; // Увеличиваем минимальное изменение угла
-    const RECONNECT_DELAY = 1000; // Задержка перед переподключением
-    const MAX_RECONNECT_ATTEMPTS = 3; // Максимальное количество попыток переподключения
+    const MOUSE_SENSITIVITY = 0.1; // Уменьшаем чувствительность для более точного контроля
+    const VELOCITY_DECAY = 0.85; // Быстрее останавливаем движение
+    const MIN_VELOCITY = 0.01; // Минимальная скорость для остановки
+    const MAX_VELOCITY = 1.0; // Ограничиваем максимальную скорость
+    const UPDATE_INTERVAL = 16; // 60 FPS для плавности
+    const MIN_ANGLE_CHANGE = 0.1; // Минимальное изменение угла для отправки на сервер
 
     // Состояние вращения
     let rotationState = {
@@ -146,9 +143,7 @@
         lastFrameTime: performance.now(),
         lastUpdateTime: 0,
         lastSentAzimuth: 0,
-        lastSentElevation: 0,
-        accumulatedMotionX: 0,
-        accumulatedMotionY: 0
+        lastSentElevation: 0
     };
 
     // Буфер для предварительно загруженных кадров
@@ -156,7 +151,7 @@
     let isBuffering = false;
     let lastPredictedAzimuth = 0;
     let lastPredictedElevation = 0;
-    
+
     const img = document.getElementById('modelImage');
     const viewer = document.getElementById('viewer');
 
@@ -204,27 +199,37 @@
         const deltaX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
         const deltaY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
 
-        // Накопление движения с ограничением
-        rotationState.accumulatedMotionX = Math.max(Math.min(rotationState.accumulatedMotionX + deltaX, 50), -50);
-        rotationState.accumulatedMotionY = Math.max(Math.min(rotationState.accumulatedMotionY + deltaY, 50), -50);
-
         const sensitivity = MOUSE_SENSITIVITY * (window.devicePixelRatio || 1);
         
-        // Плавное обновление целевых углов
-        rotationState.targetAzimuth -= rotationState.accumulatedMotionX * sensitivity * 0.5;
-        rotationState.targetElevation += rotationState.accumulatedMotionY * sensitivity * 0.5;
+        // Обновляем углы напрямую при перетаскивании
+        rotationState.azimuth -= deltaX * sensitivity;
+        rotationState.elevation += deltaY * sensitivity;
 
-        // Обновляем скорость с ограничением
-        rotationState.velocityX = Math.max(Math.min(-rotationState.accumulatedMotionX * sensitivity * 0.05, MAX_VELOCITY), -MAX_VELOCITY);
-        rotationState.velocityY = Math.max(Math.min(rotationState.accumulatedMotionY * sensitivity * 0.05, MAX_VELOCITY), -MAX_VELOCITY);
+        // Обновляем скорость для инерции
+        rotationState.velocityX = -deltaX * sensitivity * 0.1;
+        rotationState.velocityY = deltaY * sensitivity * 0.1;
 
-        // Сбрасываем накопленное движение
-        rotationState.accumulatedMotionX *= 0.5;
-        rotationState.accumulatedMotionY *= 0.5;
+        // Ограничиваем скорость
+        rotationState.velocityX = Math.max(Math.min(rotationState.velocityX, MAX_VELOCITY), -MAX_VELOCITY);
+        rotationState.velocityY = Math.max(Math.min(rotationState.velocityY, MAX_VELOCITY), -MAX_VELOCITY);
 
         // Нормализуем углы
-        rotationState.targetAzimuth = ((rotationState.targetAzimuth % 360) + 360) % 360;
-        rotationState.targetElevation = Math.max(Math.min(rotationState.targetElevation, 80), -80);
+        rotationState.azimuth = ((rotationState.azimuth % 360) + 360) % 360;
+        rotationState.elevation = Math.max(Math.min(rotationState.elevation, 80), -80);
+
+        // Отправляем обновление на сервер
+        const currentTime = performance.now();
+        if (currentTime - rotationState.lastUpdateTime >= UPDATE_INTERVAL) {
+            const angleChange = Math.abs(rotationState.azimuth - rotationState.lastSentAzimuth) + 
+                              Math.abs(rotationState.elevation - rotationState.lastSentElevation);
+            
+            if (angleChange >= MIN_ANGLE_CHANGE) {
+                sendRotateRequest(rotationState.azimuth, rotationState.elevation);
+                rotationState.lastSentAzimuth = rotationState.azimuth;
+                rotationState.lastSentElevation = rotationState.elevation;
+                rotationState.lastUpdateTime = currentTime;
+            }
+        }
     }
 
     // Основной цикл обновления
@@ -233,32 +238,35 @@
         const deltaTime = Math.min(currentTime - rotationState.lastFrameTime, 32) / 16.67;
 
         if (!rotationState.isDragging) {
+            // Применяем инерцию только когда не перетаскиваем
             if (Math.abs(rotationState.velocityX) > MIN_VELOCITY || Math.abs(rotationState.velocityY) > MIN_VELOCITY) {
-                rotationState.targetAzimuth += rotationState.velocityX * deltaTime;
-                rotationState.targetElevation += rotationState.velocityY * deltaTime;
+                rotationState.azimuth += rotationState.velocityX * deltaTime;
+                rotationState.elevation += rotationState.velocityY * deltaTime;
 
+                // Затухание скорости
                 rotationState.velocityX *= Math.pow(VELOCITY_DECAY, deltaTime);
                 rotationState.velocityY *= Math.pow(VELOCITY_DECAY, deltaTime);
+
+                // Нормализуем углы
+                rotationState.azimuth = ((rotationState.azimuth % 360) + 360) % 360;
+                rotationState.elevation = Math.max(Math.min(rotationState.elevation, 80), -80);
+
+                // Отправляем обновление на сервер
+                if (currentTime - rotationState.lastUpdateTime >= UPDATE_INTERVAL) {
+                    const angleChange = Math.abs(rotationState.azimuth - rotationState.lastSentAzimuth) + 
+                                      Math.abs(rotationState.elevation - rotationState.lastSentElevation);
+                    
+                    if (angleChange >= MIN_ANGLE_CHANGE) {
+                        sendRotateRequest(rotationState.azimuth, rotationState.elevation);
+                        rotationState.lastSentAzimuth = rotationState.azimuth;
+                        rotationState.lastSentElevation = rotationState.elevation;
+                        rotationState.lastUpdateTime = currentTime;
+                    }
+                }
             } else {
+                // Полностью останавливаем движение
                 rotationState.velocityX = 0;
                 rotationState.velocityY = 0;
-            }
-        }
-
-        const azimuthDiff = ((rotationState.targetAzimuth - rotationState.azimuth + 180) % 360) - 180;
-        const elevationDiff = rotationState.targetElevation - rotationState.elevation;
-
-        rotationState.azimuth += azimuthDiff * INTERPOLATION_SPEED * deltaTime;
-        rotationState.elevation += elevationDiff * INTERPOLATION_SPEED * deltaTime;
-
-        rotationState.azimuth = ((rotationState.azimuth % 360) + 360) % 360;
-        rotationState.elevation = Math.max(Math.min(rotationState.elevation, 80), -80);
-
-        if (currentTime - rotationState.lastUpdateTime >= UPDATE_INTERVAL) {
-            const angleChange = Math.abs(azimuthDiff) + Math.abs(elevationDiff);
-            if (angleChange >= MIN_ANGLE_CHANGE) {
-                sendRotateRequest(rotationState.azimuth, rotationState.elevation);
-                rotationState.lastUpdateTime = currentTime;
             }
         }
 
@@ -275,8 +283,6 @@
         rotationState.lastMouseY = e.clientY;
         rotationState.velocityX = 0;
         rotationState.velocityY = 0;
-        rotationState.accumulatedMotionX = 0;
-        rotationState.accumulatedMotionY = 0;
         img.style.cursor = 'grabbing';
     });
 
@@ -293,6 +299,9 @@
         if (rotationState.isDragging) {
             rotationState.isDragging = false;
             img.style.cursor = 'grab';
+            // Сбрасываем скорость при выходе за пределы
+            rotationState.velocityX = 0;
+            rotationState.velocityY = 0;
         }
     });
 
@@ -365,13 +374,13 @@
         ws.onmessage = (event) => {
             if (event.data instanceof Blob) {
                 const url = URL.createObjectURL(event.data);
-                if (img.src.startsWith('blob:')) {
-                    URL.revokeObjectURL(img.src);
-                }
-                img.src = url;
-                isImageLoading = false;
-                setLoading(false);
-                setModelSelectionEnabled(true);
+                    if (img.src.startsWith('blob:')) {
+                        URL.revokeObjectURL(img.src);
+                    }
+                    img.src = url;
+                    isImageLoading = false;
+                    setLoading(false);
+                    setModelSelectionEnabled(true);
                 
                 // Обрабатываем отложенные обновления
                 if (pendingUpdate) {
