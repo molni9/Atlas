@@ -67,8 +67,7 @@
             object-fit: contain;
             user-select: none;
             cursor: grab;
-            image-rendering: -webkit-optimize-contrast;
-            image-rendering: crisp-edges;
+            image-rendering: pixelated;
             will-change: transform;
         }
         #loading {
@@ -115,23 +114,57 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js"></script>
 
 <script>
-    let azimuth = 0;
-    let elevation = 0;
-    let isDragging = false;
-    let lastX, lastY;
-    let currentModelId = null;
+    // Основные переменные состояния
     let ws = null;
-    let lastUpdateTime = 0;
-    const UPDATE_INTERVAL = 16;  // ~60fps для максимальной плавности
-    let animationFrameId = null;
-    let lastSentAzimuth = 0;
-    let lastSentElevation = 0;
-    const MIN_ANGLE_CHANGE = 0.1;  // Минимальное изменение угла
+    let isConnected = false;
+    let currentModelId = null;
+    let isDragging = false;
     let isImageLoading = false;
-    let pendingUpdate = false;
+    
+    // Константы для настройки движения
+    const MOUSE_SENSITIVITY = 0.2; // Уменьшаем чувствительность
+    const VELOCITY_DECAY = 0.92; // Увеличиваем затухание
+    const MIN_VELOCITY = 0.001; // Увеличиваем минимальную скорость
+    const MAX_VELOCITY = 2.0; // Уменьшаем максимальную скорость
+    const INTERPOLATION_SPEED = 0.15; // Уменьшаем скорость интерполяции
+    const UPDATE_INTERVAL = 32; // Увеличиваем интервал обновления
+    const MIN_ANGLE_CHANGE = 0.1; // Увеличиваем минимальное изменение угла
+    const RECONNECT_DELAY = 1000; // Задержка перед переподключением
+    const MAX_RECONNECT_ATTEMPTS = 3; // Максимальное количество попыток переподключения
 
+    // Состояние вращения
+    let rotationState = {
+        azimuth: 0,
+        elevation: 0,
+        targetAzimuth: 0,
+        targetElevation: 0,
+        velocityX: 0,
+        velocityY: 0,
+        lastMouseX: 0,
+        lastMouseY: 0,
+        isDragging: false,
+        lastFrameTime: performance.now(),
+        lastUpdateTime: 0,
+        lastSentAzimuth: 0,
+        lastSentElevation: 0,
+        accumulatedMotionX: 0,
+        accumulatedMotionY: 0
+    };
+
+    // Буфер для предварительно загруженных кадров
+    const frameBuffer = new Map();
+    let isBuffering = false;
+    let lastPredictedAzimuth = 0;
+    let lastPredictedElevation = 0;
+    
     const img = document.getElementById('modelImage');
     const viewer = document.getElementById('viewer');
+
+    // Состояние соединения
+    let reconnectAttempts = 0;
+    let reconnectTimeout = null;
+    let lastSuccessfulUpdate = 0;
+    let pendingUpdate = false;
 
     function showError(message) {
         const errorDiv = document.getElementById('errorMessage');
@@ -146,76 +179,204 @@
         document.getElementById('loading').style.display = loading ? 'block' : 'none';
     }
 
-    function updateImage() {
-        if (!ws || ws.readyState !== WebSocket.OPEN || isImageLoading) {
+    // Функция переподключения
+    function reconnectWebSocket(modelId) {
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            showError("Не удалось установить соединение. Пожалуйста, обновите страницу.");
             return;
         }
 
-        const now = Date.now();
-        if (now - lastUpdateTime >= UPDATE_INTERVAL) {
-            if (Math.abs(azimuth - lastSentAzimuth) > MIN_ANGLE_CHANGE || 
-                Math.abs(elevation - lastSentElevation) > MIN_ANGLE_CHANGE) {
-                
-                const message = JSON.stringify({ 
-                    azimuth: Math.round(azimuth * 10) / 10,
-                    elevation: Math.round(elevation * 10) / 10
-                });
-                ws.send(message);
-                lastSentAzimuth = azimuth;
-                lastSentElevation = elevation;
-                lastUpdateTime = now;
-                isImageLoading = true;
+        if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout);
+        }
+
+        reconnectTimeout = setTimeout(() => {
+            console.log(`Попытка переподключения ${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS}`);
+            connectWebSocket(modelId);
+            reconnectAttempts++;
+        }, RECONNECT_DELAY * (reconnectAttempts + 1));
+    }
+
+    // Функция обработки движения мыши
+    function handleMouseMotion(event) {
+        if (!rotationState.isDragging || isImageLoading) return;
+
+        const deltaX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+        const deltaY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+
+        // Накопление движения с ограничением
+        rotationState.accumulatedMotionX = Math.max(Math.min(rotationState.accumulatedMotionX + deltaX, 50), -50);
+        rotationState.accumulatedMotionY = Math.max(Math.min(rotationState.accumulatedMotionY + deltaY, 50), -50);
+
+        const sensitivity = MOUSE_SENSITIVITY * (window.devicePixelRatio || 1);
+        
+        // Плавное обновление целевых углов
+        rotationState.targetAzimuth -= rotationState.accumulatedMotionX * sensitivity * 0.5;
+        rotationState.targetElevation += rotationState.accumulatedMotionY * sensitivity * 0.5;
+
+        // Обновляем скорость с ограничением
+        rotationState.velocityX = Math.max(Math.min(-rotationState.accumulatedMotionX * sensitivity * 0.05, MAX_VELOCITY), -MAX_VELOCITY);
+        rotationState.velocityY = Math.max(Math.min(rotationState.accumulatedMotionY * sensitivity * 0.05, MAX_VELOCITY), -MAX_VELOCITY);
+
+        // Сбрасываем накопленное движение
+        rotationState.accumulatedMotionX *= 0.5;
+        rotationState.accumulatedMotionY *= 0.5;
+
+        // Нормализуем углы
+        rotationState.targetAzimuth = ((rotationState.targetAzimuth % 360) + 360) % 360;
+        rotationState.targetElevation = Math.max(Math.min(rotationState.targetElevation, 80), -80);
+    }
+
+    // Основной цикл обновления
+    function updateFrame() {
+        const currentTime = performance.now();
+        const deltaTime = Math.min(currentTime - rotationState.lastFrameTime, 32) / 16.67;
+
+        if (!rotationState.isDragging) {
+            if (Math.abs(rotationState.velocityX) > MIN_VELOCITY || Math.abs(rotationState.velocityY) > MIN_VELOCITY) {
+                rotationState.targetAzimuth += rotationState.velocityX * deltaTime;
+                rotationState.targetElevation += rotationState.velocityY * deltaTime;
+
+                rotationState.velocityX *= Math.pow(VELOCITY_DECAY, deltaTime);
+                rotationState.velocityY *= Math.pow(VELOCITY_DECAY, deltaTime);
+            } else {
+                rotationState.velocityX = 0;
+                rotationState.velocityY = 0;
             }
         }
-    }
 
-    function startContinuousUpdate() {
-        if (animationFrameId) return;
-        
-        function update() {
-            updateImage();
-            animationFrameId = requestAnimationFrame(update);
+        const azimuthDiff = ((rotationState.targetAzimuth - rotationState.azimuth + 180) % 360) - 180;
+        const elevationDiff = rotationState.targetElevation - rotationState.elevation;
+
+        rotationState.azimuth += azimuthDiff * INTERPOLATION_SPEED * deltaTime;
+        rotationState.elevation += elevationDiff * INTERPOLATION_SPEED * deltaTime;
+
+        rotationState.azimuth = ((rotationState.azimuth % 360) + 360) % 360;
+        rotationState.elevation = Math.max(Math.min(rotationState.elevation, 80), -80);
+
+        if (currentTime - rotationState.lastUpdateTime >= UPDATE_INTERVAL) {
+            const angleChange = Math.abs(azimuthDiff) + Math.abs(elevationDiff);
+            if (angleChange >= MIN_ANGLE_CHANGE) {
+                sendRotateRequest(rotationState.azimuth, rotationState.elevation);
+                rotationState.lastUpdateTime = currentTime;
+            }
         }
-        
-        animationFrameId = requestAnimationFrame(update);
+
+        rotationState.lastFrameTime = currentTime;
+        requestAnimationFrame(updateFrame);
     }
 
-    function setModelSelectionEnabled(enabled) {
-        document.querySelectorAll('.model-item').forEach(el => {
-            el.style.pointerEvents = enabled ? 'auto' : 'none';
-            el.style.opacity = enabled ? '1' : '0.5';
-        });
+    // Обработчики событий мыши
+    viewer.addEventListener('mousedown', (e) => {
+        if (isImageLoading) return;
+        e.preventDefault();
+        rotationState.isDragging = true;
+        rotationState.lastMouseX = e.clientX;
+        rotationState.lastMouseY = e.clientY;
+        rotationState.velocityX = 0;
+        rotationState.velocityY = 0;
+        rotationState.accumulatedMotionX = 0;
+        rotationState.accumulatedMotionY = 0;
+        img.style.cursor = 'grabbing';
+    });
+
+    document.addEventListener('mousemove', handleMouseMotion);
+
+    document.addEventListener('mouseup', () => {
+        if (rotationState.isDragging) {
+            rotationState.isDragging = false;
+            img.style.cursor = 'grab';
+        }
+    });
+
+    document.addEventListener('mouseleave', () => {
+        if (rotationState.isDragging) {
+            rotationState.isDragging = false;
+            img.style.cursor = 'grab';
+        }
+    });
+
+    // Функция отправки запроса на вращение
+    function sendRotateRequest(azimuth, elevation) {
+        if (!ws || ws.readyState !== WebSocket.OPEN || isImageLoading) {
+            pendingUpdate = true;
+            return;
+        }
+
+        const currentTime = performance.now();
+        if (currentTime - lastSuccessfulUpdate < UPDATE_INTERVAL) {
+            pendingUpdate = true;
+            return;
+        }
+
+        try {
+            const message = {
+                type: 'rotate',
+                azimuth: Math.round(azimuth * 10) / 10,
+                elevation: Math.round(elevation * 10) / 10
+            };
+            
+            ws.send(JSON.stringify(message));
+            lastSuccessfulUpdate = currentTime;
+            pendingUpdate = false;
+        } catch (error) {
+            console.error("Ошибка отправки сообщения:", error);
+            pendingUpdate = true;
+        }
     }
 
+    // WebSocket обработчики
     function connectWebSocket(modelId) {
         if (ws) {
             ws.close();
         }
+        
         setLoading(true);
         setModelSelectionEnabled(false);
-
+        isImageLoading = true;
+        
+        // Сбрасываем состояние
+        rotationState.azimuth = 0;
+        rotationState.elevation = 0;
+        rotationState.targetAzimuth = 0;
+        rotationState.targetElevation = 0;
+        rotationState.velocityX = 0;
+        rotationState.velocityY = 0;
+        lastSuccessfulUpdate = 0;
+        pendingUpdate = false;
+        
         ws = new WebSocket(`ws://${window.location.host}/ws/render/${modelId}`);
         ws.binaryType = 'blob';
         
         ws.onopen = () => {
             console.log("WebSocket соединение установлено");
-            lastSentAzimuth = azimuth;
-            lastSentElevation = elevation;
-            startContinuousUpdate();
+            isConnected = true;
+            reconnectAttempts = 0;
+            
+            // Отправляем начальное положение
+            const message = {
+                type: 'rotate',
+                azimuth: 0,
+                elevation: 0
+            };
+            ws.send(JSON.stringify(message));
         };
         
         ws.onmessage = (event) => {
             if (event.data instanceof Blob) {
-                const blob = event.data;
-                const url = URL.createObjectURL(blob);
-                
-                const img = document.getElementById('modelImage');
+                const url = URL.createObjectURL(event.data);
                 if (img.src.startsWith('blob:')) {
                     URL.revokeObjectURL(img.src);
                 }
                 img.src = url;
                 isImageLoading = false;
+                setLoading(false);
                 setModelSelectionEnabled(true);
+                
+                // Обрабатываем отложенные обновления
+                if (pendingUpdate) {
+                    sendRotateRequest(rotationState.azimuth, rotationState.elevation);
+                }
             }
         };
         
@@ -224,97 +385,35 @@
             showError("Ошибка соединения с сервером");
             setLoading(false);
             setModelSelectionEnabled(true);
+            isConnected = false;
+            isImageLoading = false;
+            
+            if (currentModelId) {
+                reconnectWebSocket(currentModelId);
+            }
         };
         
-        ws.onclose = () => {
-            console.log("WebSocket соединение закрыто");
-            stopContinuousUpdate();
+        ws.onclose = (event) => {
+            console.log("WebSocket соединение закрыто:", event.code, event.reason);
             setLoading(false);
             setModelSelectionEnabled(true);
+            isConnected = false;
+            isImageLoading = false;
+            
+            if (event.code !== 1000 && currentModelId) {
+                reconnectWebSocket(currentModelId);
+            }
         };
     }
 
-    img.onload = () => {
-        setLoading(false);
-        isImageLoading = false;
-        setModelSelectionEnabled(true);
-    };
-    img.onerror = () => {
-        setLoading(false);
-        isImageLoading = false;
-        setModelSelectionEnabled(true);
-        showError('Ошибка загрузки рендера');
-    };
-
-    // Обработчики событий мыши
-    viewer.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        if (isImageLoading) return;
-        
-        isDragging = true;
-        lastX = e.clientX;
-        lastY = e.clientY;
-        img.style.cursor = 'grabbing';
-    });
-
-    window.addEventListener('mouseup', () => {
-        if (isDragging) {
-            isDragging = false;
-            img.style.cursor = 'grab';
-            // Отправляем финальную позицию
-            updateImage();
-        }
-    });
-
-    // Оптимизированный обработчик движения мыши
-    window.addEventListener('mousemove', (e) => {
-        if (!isDragging || isImageLoading) return;
-        
-        const dx = e.clientX - lastX;
-        const dy = e.clientY - lastY;
-        
-        // Уменьшаем чувствительность для более плавного вращения
-        const sensitivity = 0.2;
-        azimuth -= dx * sensitivity;
-        elevation -= dy * sensitivity;
-        
-        // Ограничиваем угол наклона
-        elevation = Math.max(-80, Math.min(80, elevation));
-        
-        // Нормализуем азимут
-        while (azimuth > 360) azimuth -= 360;
-        while (azimuth < 0) azimuth += 360;
-        
-        lastX = e.clientX;
-        lastY = e.clientY;
-    });
-
-    // Предотвращаем контекстное меню при правом клике
-    viewer.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-    });
-
-    // Добавляем обработку потери фокуса окна
-    window.addEventListener('blur', () => {
-        if (isDragging) {
-            isDragging = false;
-            img.style.cursor = 'grab';
-            updateImage();
-        }
-    });
-
-    // Добавляем обработку выхода курсора за пределы окна
-    window.addEventListener('mouseleave', () => {
-        if (isDragging) {
-            isDragging = false;
-            img.style.cursor = 'grab';
-            updateImage();
-        }
+    // Инициализация
+    document.addEventListener('DOMContentLoaded', () => {
+        loadModels();
+        requestAnimationFrame(updateFrame);
     });
 
     // Очистка при размонтировании
     window.addEventListener('beforeunload', () => {
-        stopContinuousUpdate();
         if (ws) {
             ws.close();
         }
@@ -345,8 +444,8 @@
                     document.querySelectorAll('.model-item').forEach(el => el.classList.remove('active'));
                     div.classList.add('active');
                     currentModelId = model.s3ObjectKey;
-                    azimuth = 0;
-                    elevation = 0;
+                    rotationState.azimuth = 0;
+                    rotationState.elevation = 0;
                     setLoading(true);
                     setModelSelectionEnabled(false);
                     connectWebSocket(model.s3ObjectKey);
@@ -358,8 +457,8 @@
                 const firstDiv = document.querySelector(`.model-item[data-model-id="${models[0].s3ObjectKey}"]`);
                 firstDiv.classList.add('active');
                 currentModelId = models[0].s3ObjectKey;
-                azimuth = 0;
-                elevation = 0;
+                rotationState.azimuth = 0;
+                rotationState.elevation = 0;
                 setLoading(true);
                 setModelSelectionEnabled(false);
                 connectWebSocket(models[0].s3ObjectKey);
@@ -370,7 +469,17 @@
         }
     }
 
-    document.addEventListener('DOMContentLoaded', loadModels);
+    function setModelSelectionEnabled(enabled) {
+        document.querySelectorAll('.model-item').forEach(el => {
+            el.style.pointerEvents = enabled ? 'auto' : 'none';
+            el.style.opacity = enabled ? '1' : '0.5';
+        });
+    }
+
+    // Функция интерполяции
+    function interpolate(start, end, factor) {
+        return start + (end - start) * factor;
+    }
 </script>
 </body>
 </html>
