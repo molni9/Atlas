@@ -3,9 +3,34 @@ services:
     image: test:latest
     build:
       context: .
+      dockerfile: Dockerfile.gpu
       args:
         DOCKER_BUILDKIT: 1
-    restart: "no"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+      - SPRING_PROFILES_ACTIVE=gpu
+      - minio.endpoint=http://minio:9000
+      - minio.access-key=admin
+      - minio.secret-key=password
+      - minio.bucket=my-files
+      - spring.datasource.url=jdbc:postgresql://postgres:5432/mydb
+      - spring.datasource.username=user
+      - spring.datasource.password=password
+      - server.port=8060
+      - render.width=960
+      - render.height=540
+      - render.jpeg.quality=0.8
+      - render.angle.step.deg=2
+    depends_on:
+      - minio
+      - postgres
     ports:
       - "8060:8060"
   minio:

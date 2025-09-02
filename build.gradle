@@ -20,18 +20,25 @@ configurations {
     }
 }
 
+ext {
+    lwjglVersion = '3.3.3'
+}
+
 repositories {
     mavenCentral()
-    maven { url "https://jogamp.org/deployment/maven/" } // для JOGL
+    maven { url "https://jogamp.org/deployment/maven/" } // для JOGL (временно, до миграции)
 }
 
 dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter'
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
+
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
@@ -44,6 +51,9 @@ dependencies {
 
     // Валидация Spring
     implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // Jakarta annotations (for PostConstruct/PreDestroy)
+    compileOnly 'jakarta.annotation:jakarta.annotation-api:2.1.1'
 
     // JWT
     implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
@@ -58,7 +68,7 @@ dependencies {
     implementation 'org.mapstruct:mapstruct:1.5.5.Final'
     annotationProcessor 'org.mapstruct:mapstruct-processor:1.5.5.Final'
 
-    // JOGL (OpenGL для Java)
+    // JOGL (временно, до миграции)
     implementation 'org.jogamp.jogl:jogl-all-main:2.4.0'
     implementation 'de.javagl:obj:0.3.0'
     implementation 'org.jogamp.gluegen:gluegen-rt-main:2.4.0'
@@ -67,6 +77,11 @@ dependencies {
     implementation 'jakarta.websocket:jakarta.websocket-api:2.1.1'
     implementation 'org.apache.tomcat.embed:tomcat-embed-websocket:10.1.19'
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
+
+    // LWJGL 3 + OpenGL + EGL (headless GPU)
+    implementation "org.lwjgl:lwjgl:${lwjglVersion}"
+    implementation "org.lwjgl:lwjgl-opengl:${lwjglVersion}"
+    implementation "org.lwjgl:lwjgl-egl:${lwjglVersion}"
 }
 
 tasks.named('test') {
