@@ -6,11 +6,7 @@ services:
       dockerfile: Dockerfile.gpu
       args:
         DOCKER_BUILDKIT: 1
-    gpus: all
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
-      - SPRING_PROFILES_ACTIVE=gpu
       - minio.endpoint=http://minio:9000
       - minio.access-key=admin
       - minio.secret-key=password
