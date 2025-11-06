@@ -3,25 +3,19 @@ package beckand.test.Controller;
 import beckand.test.DTO.FileDTO;
 import beckand.test.DTO.FileUploadRequest;
 import beckand.test.Service.FileService;
-import beckand.test.Service.LwjglEglRenderer;
+import beckand.test.Service.RenderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-
-import java.awt.*;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.List;
-import javax.imageio.ImageIO;
 
 @Slf4j
 @RestController
@@ -31,12 +25,18 @@ import javax.imageio.ImageIO;
 public class FileController {
 
     private final FileService fileService;
-    private final ObjectProvider<LwjglEglRenderer> eglRendererProvider;
+    private final RenderService renderService;
 
     @Operation(summary = "Загрузить файл", description = "Загружает файл с описанием")
     @PostMapping(value = "/upload", consumes = {"multipart/form-data"})
     public ResponseEntity<FileDTO> uploadFile(@ModelAttribute FileUploadRequest request) {
         return ResponseEntity.ok(fileService.uploadFile(request));
+    }
+
+    @Operation(summary = "Список файлов", description = "Возвращает список доступных файлов из MinIO")
+    @GetMapping("")
+    public ResponseEntity<List<FileDTO>> listFiles() {
+        return ResponseEntity.ok(fileService.getAllFiles());
     }
 
     @Operation(summary = "Удалить файл", description = "Удаляет файл по имени")
@@ -90,26 +90,13 @@ public class FileController {
     ) {
         try {
             log.info("Rendering model: {}, azimuth: {}, elevation: {}", objectKey, azimuth, elevation);
-            LwjglEglRenderer eglRenderer = eglRendererProvider.getIfAvailable();
-            if (eglRenderer != null) {
-                byte[] imageData = eglRenderer.renderFrame(960, 540, azimuth, elevation);
+            FileDTO info = fileService.getFileInfo(objectKey);
+            try (InputStream is = fileService.getFileContent(objectKey)) {
+                byte[] jpeg = renderService.renderModel(objectKey, is, info.getFileType(), azimuth, elevation);
                 return ResponseEntity.ok()
                         .contentType(MediaType.IMAGE_JPEG)
-                        .body(imageData);
+                        .body(jpeg);
             }
-            // Fallback: простая заглушка PNG
-            BufferedImage bi = new BufferedImage(800, 450, BufferedImage.TYPE_INT_RGB);
-            Graphics2D g = bi.createGraphics();
-            g.setColor(Color.WHITE);
-            g.fillRect(0, 0, 800, 450);
-            g.setColor(Color.DARK_GRAY);
-            g.drawString("GPU renderer disabled", 20, 30);
-            g.dispose();
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ImageIO.write(bi, "PNG", baos);
-            return ResponseEntity.ok()
-                    .contentType(MediaType.IMAGE_PNG)
-                    .body(baos.toByteArray());
         } catch (Exception e) {
             log.error("Error rendering model: {}", objectKey, e);
             throw new RuntimeException("Error rendering model: " + e.getMessage(), e);

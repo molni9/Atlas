@@ -1,7 +1,5 @@
-package beckand.test.config;
+package beckand.test.websocket;
 
-import beckand.test.Service.WebSocketRenderService;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
@@ -11,12 +9,17 @@ import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry
 @EnableWebSocket
 public class WebSocketConfig implements WebSocketConfigurer {
 
-    @Autowired
-    private WebSocketRenderService webSocketRenderService;
+    private final RenderWebSocketHandler renderWebSocketHandler;
+
+    public WebSocketConfig(RenderWebSocketHandler renderWebSocketHandler) {
+        this.renderWebSocketHandler = renderWebSocketHandler;
+    }
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(webSocketRenderService, "/ws/render/{modelId}")
-                .setAllowedOrigins("*");
+        registry.addHandler(renderWebSocketHandler, "/ws/render/{modelId}")
+                .setAllowedOriginPatterns("*");
     }
-} 
+}
+
+

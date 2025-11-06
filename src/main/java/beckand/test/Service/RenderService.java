@@ -30,7 +30,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
-@org.springframework.context.annotation.Profile("jogl")
 public class RenderService {
 	@Value("${render.width:1024}")
 	private int renderWidth;
@@ -75,8 +74,10 @@ public class RenderService {
 	@Value("${minio.bucket}")
 	private String bucket;
 
-	public RenderService() {
-		try {
+    private boolean stubMode = false;
+
+    public RenderService() {
+        try {
 			System.setProperty("java.awt.headless", "true");
 			GLProfile.initSingleton();
 
@@ -254,10 +255,10 @@ public class RenderService {
 			if (!isInitialized) {
 				throw new RuntimeException("Failed to initialize OpenGL context");
 			}
-		} catch (Exception e) {
-			log.error("Failed to initialize OpenGL", e);
-			throw new RuntimeException("Failed to initialize OpenGL: " + e.getMessage(), e);
-		}
+        } catch (Exception e) {
+            log.warn("OpenGL initialization failed, switching to stub renderer: {}", e.toString());
+            stubMode = true;
+        }
 	}
 
 	private void updateModelBounds() {
@@ -285,12 +286,12 @@ public class RenderService {
 				minX, maxX, minY, maxY, minZ, maxZ, maxDim);
 	}
 
-	public byte[] renderModel(String objectKey, InputStream modelStream, String fileType, double azimuth, double elevation) throws IOException {
-		if (!isInitialized) {
-			throw new IOException("OpenGL context is not initialized");
-		}
+    public byte[] renderModel(String objectKey, InputStream modelStream, String fileType, double azimuth, double elevation) throws IOException {
+        if (stubMode || !isInitialized) {
+            return renderStubJpeg(objectKey, azimuth, elevation);
+        }
 
-		try {
+        try {
 			int qAz = quantizeAngle(azimuth);
 			int qEl = quantizeAngle(elevation);
 			String cacheKey = objectKey + ":" + qAz + ":" + qEl + ":" + renderWidth + "x" + renderHeight;
@@ -350,6 +351,30 @@ public class RenderService {
 			throw new IOException("Error during render: " + e.getMessage(), e);
 		}
 	}
+
+    private byte[] renderStubJpeg(String objectKey, double azimuth, double elevation) throws IOException {
+        java.awt.image.BufferedImage bi = new java.awt.image.BufferedImage(Math.max(1, renderWidth), Math.max(1, renderHeight), java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = bi.createGraphics();
+        g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setPaint(new java.awt.GradientPaint(0, 0, new java.awt.Color(24, 26, 32), 0, renderHeight, new java.awt.Color(46, 50, 58)));
+        g.fillRect(0, 0, renderWidth, renderHeight);
+        g.setColor(java.awt.Color.WHITE);
+        g.setFont(new java.awt.Font("SansSerif", java.awt.Font.BOLD, 18));
+        g.drawString("Stub Render", 20, 30);
+        g.setFont(new java.awt.Font("Monospaced", java.awt.Font.PLAIN, 14));
+        g.drawString("object: " + objectKey, 20, 55);
+        g.drawString(String.format("az=%.1f el=%.1f", azimuth, elevation), 20, 75);
+        g.setColor(new java.awt.Color(100, 180, 255));
+        int size = Math.min(renderWidth, renderHeight) / 3;
+        int x = renderWidth / 2 - size / 2;
+        int y = renderHeight / 2 - size / 2;
+        g.fillRoundRect(x, y, size, size, 20, 20);
+        g.dispose();
+
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(bi, "jpeg", baos);
+        return baos.toByteArray();
+    }
 
 	private int quantizeAngle(double angle) {
 		int step = Math.max(1, angleStepDeg);
