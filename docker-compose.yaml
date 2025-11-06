@@ -14,7 +14,7 @@ services:
       - spring.datasource.url=jdbc:postgresql://postgres:5432/mydb
       - spring.datasource.username=user
       - spring.datasource.password=password
-      - server.port=8060
+      - server.port=8010
       - render.width=960
       - render.height=540
       - render.jpeg.quality=0.8
@@ -23,7 +23,7 @@ services:
       - minio
       - postgres
     ports:
-      - "8060:8060"
+      - "8010:8010"
   minio:
     container_name: minio
     image: minio/minio:RELEASE.2024-04-18T19-09-19Z
