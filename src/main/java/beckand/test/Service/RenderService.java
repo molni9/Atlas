@@ -3,15 +3,17 @@ package beckand.test.Service;
 import com.jogamp.opengl.*;
 import com.jogamp.opengl.glu.GLU;
 import com.jogamp.opengl.util.FPSAnimator;
+import de.javagl.obj.FloatTuple;
+import de.javagl.obj.Obj;
+import de.javagl.obj.ObjFace;
+import de.javagl.obj.ObjReader;
+import io.minio.MinioClient;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import de.javagl.obj.Obj;
-import de.javagl.obj.ObjReader;
-import de.javagl.obj.ObjFace;
-import de.javagl.obj.FloatTuple;
-import io.minio.MinioClient;
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageWriteParam;
@@ -77,35 +79,43 @@ public class RenderService {
     private boolean stubMode = false;
 
     public RenderService() {
+    }
+
+    @PostConstruct
+    private void initializeRenderer() {
         try {
-			System.setProperty("java.awt.headless", "true");
-			GLProfile.initSingleton();
+		System.setProperty("java.awt.headless", "true");
+		GLProfile.initSingleton();
 
-			GLProfile profile = GLProfile.get(GLProfile.GL2);
-			if (profile == null) {
-				throw new RuntimeException("GL2 profile is not available");
-			}
+		int width = Math.max(1, Math.min(MAX_RENDER_SIZE, renderWidth > 0 ? renderWidth : 1024));
+		int height = Math.max(1, Math.min(MAX_RENDER_SIZE, renderHeight > 0 ? renderHeight : 768));
+		renderWidth = width;
+		renderHeight = height;
+		ensurePixelBufferCapacity();
+		stubMode = false;
 
-			GLCapabilities capabilities = new GLCapabilities(profile);
-			capabilities.setHardwareAccelerated(true);
-			capabilities.setDoubleBuffered(true);
-			capabilities.setDepthBits(24);
-			capabilities.setSampleBuffers(true);
-			capabilities.setNumSamples(4);
+		GLProfile profile = GLProfile.get(GLProfile.GL2);
+		if (profile == null) {
+			throw new RuntimeException("GL2 profile is not available");
+		}
 
-			GLDrawableFactory factory = GLDrawableFactory.getFactory(profile);
-			drawable = factory.createOffscreenAutoDrawable(
-					null,
-					capabilities,
-					null,
-					renderWidth,
-					renderHeight
-			);
+		GLCapabilities capabilities = new GLCapabilities(profile);
+		capabilities.setHardwareAccelerated(true);
+		capabilities.setDoubleBuffered(true);
+		capabilities.setDepthBits(24);
+		capabilities.setSampleBuffers(true);
+		capabilities.setNumSamples(4);
 
-			pixelBuffer = ByteBuffer.allocateDirect(renderWidth * renderHeight * 4);
-			pixelBuffer.order(ByteOrder.nativeOrder());
+		GLDrawableFactory factory = GLDrawableFactory.getFactory(profile);
+		drawable = factory.createOffscreenAutoDrawable(
+				null,
+				capabilities,
+				null,
+				renderWidth,
+				renderHeight
+		);
 
-			drawable.addGLEventListener(new GLEventListener() {
+		drawable.addGLEventListener(new GLEventListener() {
 				@Override
 				public void init(GLAutoDrawable drawable) {
 					GL gl = drawable.getGL();
@@ -261,6 +271,24 @@ public class RenderService {
         }
 	}
 
+    @PreDestroy
+    private void shutdownRenderer() {
+        if (animator != null && animator.isStarted()) {
+            animator.stop();
+        }
+        if (drawable != null) {
+            drawable.destroy();
+        }
+    }
+
+	private void ensurePixelBufferCapacity() {
+		int expectedSize = Math.max(1, renderWidth) * Math.max(1, renderHeight) * 4;
+		if (pixelBuffer == null || pixelBuffer.capacity() < expectedSize) {
+			pixelBuffer = ByteBuffer.allocateDirect(expectedSize);
+			pixelBuffer.order(ByteOrder.nativeOrder());
+		}
+	}
+
 	private void updateModelBounds() {
 		if (currentModel == null) return;
 		minX = Float.MAX_VALUE;
@@ -292,6 +320,7 @@ public class RenderService {
         }
 
         try {
+			ensurePixelBufferCapacity();
 			int qAz = quantizeAngle(azimuth);
 			int qEl = quantizeAngle(elevation);
 			String cacheKey = objectKey + ":" + qAz + ":" + qEl + ":" + renderWidth + "x" + renderHeight;
