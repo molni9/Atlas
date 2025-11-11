@@ -43,10 +43,11 @@ public class RenderWebSocketHandler implements WebSocketHandler {
                 if (!"rotate".equals(type)) return;
                 double azimuth = root.path("azimuth").asDouble(0);
                 double elevation = root.path("elevation").asDouble(0);
+                boolean finalFrame = root.path("final").asBoolean(false);
 
                 FileDTO info = fileService.getFileInfo(modelId);
                 try (InputStream is = fileService.getFileContent(modelId)) {
-                    byte[] jpeg = renderService.renderModel(modelId, is, info.getFileType(), azimuth, elevation);
+                    byte[] jpeg = renderService.renderModelAdaptive(modelId, is, info.getFileType(), azimuth, elevation, finalFrame);
                     session.sendMessage(new BinaryMessage(jpeg));
                 }
             }

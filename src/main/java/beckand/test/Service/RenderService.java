@@ -381,6 +381,101 @@ public class RenderService {
 		}
 	}
 
+    public byte[] renderModelAdaptive(String objectKey, InputStream modelStream, String fileType, double azimuth, double elevation, boolean finalFrame) throws IOException {
+        // finalFrame=true -> высокое качество; false -> превью (снижение качества и даунскейл перед кодированием)
+        if (stubMode || !isInitialized) {
+            return renderStubJpeg(objectKey, azimuth, elevation);
+        }
+        ensurePixelBufferCapacity();
+
+        int qAz = quantizeAngle(azimuth);
+        int qEl = quantizeAngle(elevation);
+
+        // Для финального кадра используем кэш; превью не кэшируем, чтобы не засорять
+        if (finalFrame) {
+            String key = objectKey + ":" + qAz + ":" + qEl + ":" + renderWidth + "x" + renderHeight;
+            byte[] cached = renderCache.get(key);
+            if (cached != null) return cached;
+        }
+
+        // Переключение модели и выставление углов — общие
+        try {
+            if (!objectKey.equals(currentModelId)) {
+                currentModel = ObjReader.read(modelStream);
+                if (currentModel.getNumFaces() == 0 || currentModel.getNumVertices() == 0) {
+                    throw new IOException("Модель не содержит вершин или граней");
+                }
+                currentModelId = objectKey;
+                updateModelBounds();
+            }
+
+            currentAzimuth = qAz;
+            currentElevation = qEl;
+            needsRender = true;
+
+            synchronized (renderLock) {
+                renderComplete = false;
+                while (!renderComplete) {
+                    try {
+                        renderLock.wait(10);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Rendering was interrupted", e);
+                    }
+                }
+            }
+
+            // Собираем полный кадр
+            BufferedImage full = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_RGB);
+            int[] pixels = ((DataBufferInt) full.getRaster().getDataBuffer()).getData();
+            for (int i = 0; i < renderHeight; i++) {
+                for (int j = 0; j < renderWidth; j++) {
+                    int index = (renderHeight - 1 - i) * renderWidth + j;
+                    int r = pixelBuffer.get(index * 4) & 0xFF;
+                    int g = pixelBuffer.get(index * 4 + 1) & 0xFF;
+                    int b = pixelBuffer.get(index * 4 + 2) & 0xFF;
+                    pixels[i * renderWidth + j] = (r << 16) | (g << 8) | b;
+                }
+            }
+
+            BufferedImage toEncode = full;
+            float quality = jpegQuality;
+
+            // Для превью уменьшаем разрешение в 2 раза по каждой стороне и качество — для снижения веса и ускорения
+            if (!finalFrame) {
+                int w = Math.max(1, renderWidth / 2);
+                int h = Math.max(1, renderHeight / 2);
+                BufferedImage scaled = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+                java.awt.Graphics2D g2 = scaled.createGraphics();
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING, java.awt.RenderingHints.VALUE_RENDER_QUALITY);
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.drawImage(full, 0, 0, w, h, null);
+                g2.dispose();
+                toEncode = scaled;
+                quality = Math.min(0.7f, Math.max(0.4f, jpegQuality)); // превью: умеренное качество
+            } else {
+                quality = Math.max(0.85f, jpegQuality); // финал: высокое качество
+            }
+
+            byte[] out = encodeJpeg(toEncode, quality);
+            if (finalFrame) {
+                String key = objectKey + ":" + qAz + ":" + qEl + ":" + renderWidth + "x" + renderHeight;
+                if (renderCache.size() >= maxCacheEntries) {
+                    Iterator<String> it = renderCache.keySet().iterator();
+                    if (it.hasNext()) {
+                        renderCache.remove(it.next());
+                    }
+                }
+                renderCache.put(key, out);
+            }
+            return out;
+        } catch (Exception e) {
+            log.error("Error during adaptive render", e);
+            throw new IOException("Error during adaptive render: " + e.getMessage(), e);
+        }
+    }
+
     private byte[] renderStubJpeg(String objectKey, double azimuth, double elevation) throws IOException {
         java.awt.image.BufferedImage bi = new java.awt.image.BufferedImage(Math.max(1, renderWidth), Math.max(1, renderHeight), java.awt.image.BufferedImage.TYPE_INT_RGB);
         java.awt.Graphics2D g = bi.createGraphics();
