@@ -37,6 +37,8 @@ public class RenderWebSocketHandler implements WebSocketHandler {
                 if (uri == null) return;
                 String path = uri.getPath();
                 String modelId = path.substring(path.lastIndexOf('/') + 1);
+                String query = uri.getQuery();
+                boolean streamMode = query != null && query.contains("stream=true");
 
                 JsonNode root = objectMapper.readTree(textMessage.getPayload());
                 String type = root.path("type").asText("");
@@ -45,10 +47,17 @@ public class RenderWebSocketHandler implements WebSocketHandler {
                 double elevation = root.path("elevation").asDouble(0);
                 boolean finalFrame = root.path("final").asBoolean(false);
 
-                FileDTO info = fileService.getFileInfo(modelId);
-                try (InputStream is = fileService.getFileContent(modelId)) {
-                    byte[] jpeg = renderService.renderModelAdaptive(modelId, is, info.getFileType(), azimuth, elevation, finalFrame);
-                    session.sendMessage(new BinaryMessage(jpeg));
+                if (streamMode) {
+                    try (InputStream is = fileService.getFileContent(modelId)) {
+                        renderService.loadModelIfNeeded(modelId, is);
+                    }
+                    renderService.updateAngles(azimuth, elevation, finalFrame);
+                } else {
+                    FileDTO info = fileService.getFileInfo(modelId);
+                    try (InputStream is = fileService.getFileContent(modelId)) {
+                        byte[] jpeg = renderService.renderModelAdaptive(modelId, is, info.getFileType(), azimuth, elevation, finalFrame);
+                        session.sendMessage(new BinaryMessage(jpeg));
+                    }
                 }
             }
         } catch (Exception e) {

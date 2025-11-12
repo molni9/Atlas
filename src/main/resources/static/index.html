@@ -453,7 +453,7 @@
 
     // Функция отправки запроса на вращение
     function sendRotateRequest(azimuth, elevation, isFinal = false) {
-        if (!ws || ws.readyState !== WebSocket.OPEN || isImageLoading) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
             pendingUpdate = true;
             return;
         }
@@ -504,13 +504,15 @@
         lastSuccessfulUpdate = 0;
         pendingUpdate = false;
         
-        ws = new WebSocket(`ws://${window.location.host}/ws/render/${modelId}`);
+        ws = new WebSocket(`ws://${window.location.host}/ws/render/${modelId}?stream=true`);
         ws.binaryType = 'blob';
         
         ws.onopen = () => {
             console.log("WebSocket соединение установлено");
             isConnected = true;
             reconnectAttempts = 0;
+            // В stream-режиме изображения по WS не приходят, не блокируем отправку
+            isImageLoading = false;
             
             // Отправляем начальное положение
             const message = {
@@ -620,11 +622,12 @@
                     rotationState.elevation = 0;
                     setLoading(true);
                     setModelSelectionEnabled(false);
-                    if (useLocalRender && (model.fileType?.includes('obj') || model.s3ObjectKey.toLowerCase().endsWith('.obj'))) {
-                        loadObjLocally(model.s3ObjectKey);
-                    } else {
-                        connectWebSocket(model.s3ObjectKey);
-                    }
+                // Серверный стрим (MJPEG) + WS только для углов
+                connectWebSocket(model.s3ObjectKey);
+                img.src = `/stream/render/${encodeURIComponent(model.s3ObjectKey)}`;
+                img.style.display = 'block';
+                threeCanvas.style.display = 'none';
+                setLoading(false);
                 };
                 modelList.appendChild(div);
             });
@@ -637,11 +640,11 @@
                 rotationState.elevation = 0;
                 setLoading(true);
                 setModelSelectionEnabled(false);
-                if (useLocalRender && (models[0].fileType?.includes('obj') || models[0].s3ObjectKey.toLowerCase().endsWith('.obj'))) {
-                    loadObjLocally(models[0].s3ObjectKey);
-                } else {
-                    connectWebSocket(models[0].s3ObjectKey);
-                }
+                connectWebSocket(models[0].s3ObjectKey);
+                img.src = `/stream/render/${encodeURIComponent(models[0].s3ObjectKey)}`;
+                img.style.display = 'block';
+                threeCanvas.style.display = 'none';
+                setLoading(false);
             }
         } catch (error) {
             showError('Ошибка загрузки списка моделей: ' + error.message);

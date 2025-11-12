@@ -68,7 +68,8 @@ public class RenderService {
 	private float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
 	private float centerX = 0, centerY = 0, centerZ = 0;
 
-	private final Map<String, byte[]> renderCache = new ConcurrentHashMap<>();
+    private final Map<String, byte[]> renderCache = new ConcurrentHashMap<>();
+    private volatile int highQualityFrames = 0;
 
 	@Autowired
 	private MinioClient minioClient;
@@ -474,6 +475,94 @@ public class RenderService {
             log.error("Error during adaptive render", e);
             throw new IOException("Error during adaptive render: " + e.getMessage(), e);
         }
+    }
+
+    // --- Streaming helpers ---
+    public void loadModelIfNeeded(String objectKey, InputStream modelStream) throws IOException {
+        try {
+            if (!objectKey.equals(currentModelId)) {
+                currentModel = ObjReader.read(modelStream);
+                if (currentModel.getNumFaces() == 0 || currentModel.getNumVertices() == 0) {
+                    throw new IOException("Модель не содержит вершин или граней");
+                }
+                currentModelId = objectKey;
+                updateModelBounds();
+                needsRender = true;
+                highQualityFrames = Math.max(highQualityFrames, 3);
+            }
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Не удалось загрузить модель: " + e.getMessage(), e);
+        }
+    }
+
+    public void updateAngles(double azimuth, double elevation, boolean highQualityNext) {
+        int qAz = quantizeAngle(azimuth);
+        int qEl = quantizeAngle(elevation);
+        targetAzimuth = qAz;
+        targetElevation = qEl;
+        needsRender = true;
+        if (highQualityNext) {
+            highQualityFrames = Math.max(highQualityFrames, 3);
+        }
+    }
+
+    public byte[] grabEncodedFrame() throws IOException {
+        if (stubMode || !isInitialized) {
+            // Возвращаем заглушку, чтобы поток начинался сразу и не висел
+            return renderStubJpeg(currentModelId != null ? currentModelId : "stub", currentAzimuth, currentElevation);
+        }
+        boolean highQuality = highQualityFrames > 0;
+        if (highQualityFrames > 0) {
+            highQualityFrames--;
+        }
+
+        // Дождаться готовности кадра, если запрошен новый рендер
+        if (needsRender) {
+            synchronized (renderLock) {
+                if (needsRender) {
+                    renderComplete = false;
+                }
+                long start = System.currentTimeMillis();
+                while (!renderComplete && System.currentTimeMillis() - start < 500) {
+                    try {
+                        renderLock.wait(10);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Interrupted while waiting frame", e);
+                    }
+                }
+            }
+        }
+
+        BufferedImage full = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_RGB);
+        int[] pixels = ((DataBufferInt) full.getRaster().getDataBuffer()).getData();
+        for (int i = 0; i < renderHeight; i++) {
+            for (int j = 0; j < renderWidth; j++) {
+                int index = (renderHeight - 1 - i) * renderWidth + j;
+                int r = pixelBuffer.get(index * 4) & 0xFF;
+                int g = pixelBuffer.get(index * 4 + 1) & 0xFF;
+                int b = pixelBuffer.get(index * 4 + 2) & 0xFF;
+                pixels[i * renderWidth + j] = (r << 16) | (g << 8) | b;
+            }
+        }
+
+        BufferedImage toEncode = full;
+        float quality = highQuality ? Math.max(0.85f, jpegQuality) : Math.min(0.7f, Math.max(0.4f, jpegQuality));
+        if (!highQuality) {
+            int w = Math.max(1, renderWidth / 2);
+            int h = Math.max(1, renderHeight / 2);
+            BufferedImage scaled = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D g2 = scaled.createGraphics();
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING, java.awt.RenderingHints.VALUE_RENDER_QUALITY);
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.drawImage(full, 0, 0, w, h, null);
+            g2.dispose();
+            toEncode = scaled;
+        }
+        return encodeJpeg(toEncode, quality);
     }
 
     private byte[] renderStubJpeg(String objectKey, double azimuth, double elevation) throws IOException {
