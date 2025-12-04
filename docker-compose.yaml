@@ -53,5 +53,19 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 5
+  janus:
+    image: canyan/janus-gateway:latest
+    container_name: janus
+    ports:
+      - "8088:8088"   # HTTP API
+      - "8188:8188"   # WebSocket
+      - "5004:5004/udp"  # RTP video
+      - "10000-10200:10000-10200/udp"  # RTP/ICE диапазон
+    volumes:
+      - ./janus-config:/etc/janus
+    environment:
+      - DOCKER_HOST_IP=localhost
+    restart: unless-stopped
+
 volumes:
   postgres_data:

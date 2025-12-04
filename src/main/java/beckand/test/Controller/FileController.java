@@ -92,7 +92,8 @@ public class FileController {
             log.info("Rendering model: {}, azimuth: {}, elevation: {}", objectKey, azimuth, elevation);
             FileDTO info = fileService.getFileInfo(objectKey);
             try (InputStream is = fileService.getFileContent(objectKey)) {
-                byte[] jpeg = renderService.renderModel(objectKey, is, info.getFileType(), azimuth, elevation);
+                byte[] modelBytes = is.readAllBytes();
+                byte[] jpeg = renderService.renderModel(objectKey, modelBytes, info.getFileType(), azimuth, elevation);
                 return ResponseEntity.ok()
                         .contentType(MediaType.IMAGE_JPEG)
                         .body(jpeg);

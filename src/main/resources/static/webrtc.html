@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>3D WebRTC Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        :root {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: #1e293b;
+            background: #e5e9f2;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: linear-gradient(135deg,#e5e9f2,#cbd5f5);
+        }
+        #sidebar {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            width: 280px;
+            max-height: 90vh;
+            padding: 18px;
+            border-radius: 14px;
+            background: #ffffff;
+            box-shadow: 0 22px 55px rgba(15,23,42,0.25);
+            border: 1px solid #d4ddf0;
+            overflow-y: auto;
+        }
+        #sidebar h3 {
+            margin: 0 0 14px;
+            font-size: 1.05rem;
+            border-bottom: 2px solid #eef2ff;
+            padding-bottom: 8px;
+            color: #1f2937;
+        }
+        .model-item {
+            padding: 9px 11px;
+            margin-bottom: 6px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all .18s ease;
+            color: #4b5563;
+            border: 1px solid transparent;
+        }
+        .model-item:hover {
+            background: #f3f6ff;
+            border-color: #d4ddff;
+            transform: translateX(3px);
+        }
+        .model-item.active {
+            background: #e0ecff;
+            border-color: #7ea5ff;
+            color: #1d4ed8;
+            font-weight: 600;
+        }
+        #main {
+            position: absolute;
+            left: 320px;
+            right: 20px;
+            top: 20px;
+            bottom: 20px;
+            border-radius: 18px;
+            background: #0b1020;
+            box-shadow: 0 26px 70px rgba(15,23,42,0.55);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        #header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 20px;
+            background: rgba(15,23,42,0.9);
+            color: #e5e7eb;
+        }
+        #title {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+        #wsStatus {
+            padding: 4px 11px;
+            border-radius: 999px;
+            font-size: .8rem;
+            background: #fee2e2;
+            color: #b91c1c;
+        }
+        #videoWrap {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(circle at center,#111827 0,#020617 60%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+        }
+        #videoWrap.dragging { cursor: grabbing; }
+        #streamVideo {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: transparent;
+            display: block;
+        }
+        #angles {
+            padding: 10px 18px;
+            font-size: .9rem;
+            color: #cbd5f5;
+            background: rgba(15,23,42,0.95);
+            border-top: 1px solid rgba(148,163,184,0.32);
+            display: flex;
+            justify-content: space-between;
+        }
+        #error {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            max-width: 320px;
+            background: #fef2f2;
+            color: #b91c1c;
+            padding: 10px 14px;
+            border-radius: 10px;
+            box-shadow: 0 18px 40px rgba(15,23,42,0.4);
+            font-size: .85rem;
+            display: none;
+        }
+        @media (max-width: 960px) {
+            #sidebar {
+                position: static;
+                width: auto;
+                margin: 20px;
+                max-height: none;
+            }
+            #main {
+                position: static;
+                margin: 0 20px 20px;
+                height: 65vh;
+            }
+            body {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="sidebar">
+    <h3>Доступные модели</h3>
+    <div id="modelList">Загрузка...</div>
+</div>
+
+<div id="main">
+    <div id="header">
+        <div id="title">Выберите модель</div>
+        <div id="wsStatus">control: offline</div>
+    </div>
+    <div id="videoWrap">
+        <video id="streamVideo" autoplay playsinline muted></video>
+    </div>
+    <div id="angles">
+        <span id="angleText">Азимут: 0° · Высота: 0°</span>
+        <span id="extraInfo"></span>
+    </div>
+</div>
+
+<div id="error"></div>
+
+<!-- Janus WebRTC JavaScript library (optional, fallback mode will be used if not available) -->
+<script>
+    // Пробуем загрузить janus.js, но не блокируем работу если не получится
+    // Если нет интернета или CDN недоступен - сразу используем fallback
+    window.JANUS_UNAVAILABLE = true; // По умолчанию отключаем, можно включить когда будет интернет
+    const janusScript = document.createElement('script');
+    janusScript.src = 'https://cdn.jsdelivr.net/npm/janus-gateway@1.2.0/html/janus.js';
+    janusScript.onload = () => {
+        console.log('Janus.js loaded successfully');
+        window.JANUS_UNAVAILABLE = false;
+    };
+    janusScript.onerror = () => {
+        console.warn('Janus.js CDN unavailable, will use fallback mode');
+        window.JANUS_UNAVAILABLE = true;
+    };
+    document.head.appendChild(janusScript);
+</script>
+
+<script>
+    console.log('Script started');
+    
+    const state = {
+        controlSocket: null,
+        currentKey: null,
+        azimuth: 0,
+        elevation: 0,
+        dragging: false,
+        lastX: 0,
+        lastY: 0,
+        lastSendAt: 0,
+        wsOpen: false,
+        _lastSentAz: 0,
+        _lastSentEl: 0
+    };
+
+    const MAX_CONTROL_FPS = 30;
+    const MIN_DELTA = 0.5;
+
+    console.log('Getting DOM elements...');
+    const modelListEl = document.getElementById('modelList');
+    const titleEl = document.getElementById('title');
+    const wsStatusEl = document.getElementById('wsStatus');
+    const videoWrap = document.getElementById('videoWrap');
+    const videoEl = document.getElementById('streamVideo');
+    const angleTextEl = document.getElementById('angleText');
+    const extraInfoEl = document.getElementById('extraInfo');
+    const errorEl = document.getElementById('error');
+    
+    console.log('DOM elements:', {
+        modelListEl: !!modelListEl,
+        titleEl: !!titleEl,
+        videoEl: !!videoEl
+    });
+
+    // Запускаем сразу, не ждём DOMContentLoaded
+    console.log('Starting initialization...');
+    
+    function init() {
+        console.log('Init function called');
+        console.log('Calling loadModels()...');
+        try {
+            loadModels().catch(e => {
+                console.error('loadModels failed:', e);
+                console.error('Error stack:', e.stack);
+            });
+        } catch (e) {
+            console.error('Error calling loadModels:', e);
+        }
+        initPointerControls();
+        connectControlSocket();
+        // Сразу запускаем fallback режим, так как Janus недоступен
+        setTimeout(() => {
+            if (window.JANUS_UNAVAILABLE || typeof Janus === 'undefined') {
+                console.log('Starting fallback mode immediately');
+                useFallbackMode();
+            } else {
+                initWebRTC();
+            }
+        }, 500);
+    }
+    
+    // Запускаем инициализацию
+    if (document.readyState === 'loading') {
+        console.log('Document still loading, waiting for DOMContentLoaded');
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('DOMContentLoaded event fired');
+            init();
+        });
+    } else {
+        console.log('Document already ready, calling init immediately');
+        // Небольшая задержка, чтобы убедиться, что все элементы загружены
+        setTimeout(init, 100);
+    }
+
+    async function loadModels() {
+        console.log('Loading models list...');
+        console.log('modelListEl:', modelListEl);
+        if (!modelListEl) {
+            console.error('modelListEl is null!');
+            modelListEl = document.getElementById('modelList');
+            if (!modelListEl) {
+                console.error('Still cannot find modelList element!');
+                return;
+            }
+        }
+        try {
+            console.log('Fetching /files...');
+            const res = await fetch('/files').catch(e => {
+                console.error('Fetch error:', e);
+                modelListEl.textContent = 'Ошибка подключения к серверу';
+                throw e;
+            });
+            console.log('Models fetch response:', res.status, res.statusText);
+            if (!res.ok) {
+                let errorText = 'Unknown error';
+                try {
+                    const errorJson = await res.json().catch(() => null);
+                    if (errorJson) {
+                        errorText = errorJson.message || errorJson.error || JSON.stringify(errorJson);
+                    } else {
+                        errorText = await res.text().catch(() => 'Unknown error');
+                    }
+                } catch (e) {
+                    console.error('Error parsing error response:', e);
+                }
+                console.error('Response error text:', errorText);
+                if (res.status === 500) {
+                    modelListEl.innerHTML = '<div style="color: red; padding: 10px;">Ошибка сервера: MinIO недоступен или бакет не существует. Проверьте конфигурацию сервера.</div>';
+                } else {
+                    modelListEl.textContent = `Ошибка: HTTP ${res.status} - ${errorText}`;
+                }
+                throw new Error('HTTP ' + res.status + ': ' + errorText);
+            }
+            const models = await res.json();
+            console.log('Models loaded:', models.length, 'items');
+            console.log('Models data:', models);
+            
+            if (!models.length) {
+                modelListEl.textContent = 'Нет доступных моделей';
+                console.warn('No models available');
+                return;
+            }
+            
+            console.log('Clearing model list...');
+            modelListEl.innerHTML = '';
+            
+            console.log('Adding models to list...');
+            models.forEach((model, index) => {
+                try {
+                    if (!model.s3ObjectKey) {
+                        console.warn('Model without s3ObjectKey:', model);
+                        return;
+                    }
+                    console.log(`Processing model ${index + 1}:`, model.s3ObjectKey);
+                    const div = document.createElement('div');
+                    div.className = 'model-item';
+                    div.textContent = model.fileName || model.s3ObjectKey;
+                    div.title = model.s3ObjectKey;
+                    div.dataset.key = model.s3ObjectKey;
+                    div.addEventListener('click', () => {
+                        console.log('Model clicked:', model.s3ObjectKey);
+                        selectModel(div, model);
+                    });
+                    modelListEl.appendChild(div);
+                    console.log(`Added model ${index + 1}:`, model.s3ObjectKey);
+                } catch (e) {
+                    console.error(`Error adding model ${index + 1}:`, e);
+                }
+            });
+            
+            console.log('Looking for first model to auto-select...');
+            const first = modelListEl.querySelector('.model-item');
+            console.log('First model element:', first);
+            if (first) {
+                console.log('Auto-selecting first model:', first.dataset.key);
+                // Используем прямой вызов selectModel вместо click, чтобы гарантировать выполнение
+                const firstModel = models.find(m => m.s3ObjectKey === first.dataset.key);
+                console.log('First model data:', firstModel);
+                if (firstModel) {
+                    console.log('Calling selectModel with first model...');
+                    selectModel(first, firstModel);
+                } else {
+                    console.warn('First model data not found, trying click');
+                    first.click();
+                }
+            } else {
+                console.warn('No models found to auto-select');
+            }
+            console.log('loadModels completed');
+        } catch (e) {
+            console.error('Error loading models:', e);
+            modelListEl.textContent = 'Ошибка загрузки списка';
+            showError('Не удалось получить список моделей: ' + e.message);
+        }
+    }
+
+    function selectModel(item, model) {
+        console.log('selectModel called with:', model.s3ObjectKey);
+        document.querySelectorAll('.model-item').forEach(el => el.classList.remove('active'));
+        item.classList.add('active');
+        state.currentKey = model.s3ObjectKey;
+        console.log('state.currentKey set to:', state.currentKey);
+        state.azimuth = 0;
+        state.elevation = 0;
+        updateAngles();
+        titleEl.textContent = model.fileName || model.s3ObjectKey;
+        sendControl(true);
+        
+        // Если fallback режим активен, сразу загружаем кадр
+        if (fallbackInterval) {
+            console.log('Fallback mode active, triggering frame load');
+            setTimeout(() => {
+                if (state.currentKey && fallbackInterval) {
+                    const url = `/files/${encodeURIComponent(state.currentKey)}/render?azimuth=${state.azimuth}&elevation=${state.elevation}`;
+                    console.log('Manually loading frame from:', url);
+                    fetch(url)
+                        .then(res => {
+                            console.log('Manual fetch response:', res.status);
+                            return res.blob();
+                        })
+                        .then(blob => {
+                            console.log('Manual fetch blob size:', blob.size);
+                            if (blob.size > 0) {
+                                const blobUrl = URL.createObjectURL(blob);
+                                if (videoEl.src && videoEl.src.startsWith('blob:')) {
+                                    URL.revokeObjectURL(videoEl.src);
+                                }
+                                videoEl.src = blobUrl;
+                                videoEl.style.display = 'block';
+                                console.log('Manual frame loaded and displayed');
+                            }
+                        })
+                        .catch(e => console.error('Manual frame load error:', e));
+                }
+            }, 200);
+        }
+    }
+
+    function connectControlSocket() {
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        const url = `${proto}://${location.host}/ws/render-control`;
+        const ws = new WebSocket(url);
+        state.controlSocket = ws;
+
+        ws.addEventListener('open', () => {
+            state.wsOpen = true;
+            wsStatusEl.textContent = 'control: online';
+            wsStatusEl.style.background = '#dcfce7';
+            wsStatusEl.style.color = '#166534';
+            showError('');
+            if (state.currentKey) {
+                sendControl(true);
+            }
+        });
+
+        ws.addEventListener('close', () => {
+            state.wsOpen = false;
+            wsStatusEl.textContent = 'control: offline';
+            wsStatusEl.style.background = '#fee2e2';
+            wsStatusEl.style.color = '#b91c1c';
+            setTimeout(connectControlSocket, 2000);
+        });
+
+        ws.addEventListener('error', () => {
+            showError('Ошибка WebSocket управления');
+        });
+
+        ws.addEventListener('message', ev => {
+            try {
+                const data = JSON.parse(ev.data);
+                if (data.info) {
+                    extraInfoEl.textContent = data.info;
+                }
+            } catch (_) {}
+        });
+    }
+
+    function sendControl(force = false) {
+        if (!state.wsOpen || !state.controlSocket || !state.currentKey) return;
+        const now = performance.now();
+        const dt = now - state.lastSendAt;
+        const minInterval = 1000 / MAX_CONTROL_FPS;
+
+        const dAz = Math.abs(state.azimuth - state._lastSentAz);
+        const dEl = Math.abs(state.elevation - state._lastSentEl);
+
+        if (!force && (dt < minInterval || (dAz + dEl) < MIN_DELTA)) {
+            return;
+        }
+
+        const payload = {
+            objectKey: state.currentKey,
+            azimuth: Number(state.azimuth.toFixed(1)),
+            elevation: Number(state.elevation.toFixed(1))
+        };
+        try {
+            state.controlSocket.send(JSON.stringify(payload));
+            state.lastSendAt = now;
+            state._lastSentAz = payload.azimuth;
+            state._lastSentEl = payload.elevation;
+        } catch (e) {
+            showError('Ошибка отправки управления: ' + e.message);
+        }
+    }
+
+    function initPointerControls() {
+        videoWrap.addEventListener('pointerdown', e => {
+            if (!state.currentKey) return;
+            state.dragging = true;
+            videoWrap.classList.add('dragging');
+            state.lastX = e.clientX;
+            state.lastY = e.clientY;
+        });
+
+        window.addEventListener('pointermove', e => {
+            if (!state.dragging || !state.currentKey) return;
+            const dx = e.clientX - state.lastX;
+            const dy = e.clientY - state.lastY;
+            state.lastX = e.clientX;
+            state.lastY = e.clientY;
+
+            state.azimuth = (state.azimuth + dx * 0.4 + 360) % 360;
+            state.elevation = Math.max(-85, Math.min(85, state.elevation - dy * 0.4));
+            updateAngles();
+            sendControl();
+        });
+
+        window.addEventListener('pointerup', stopDrag);
+        window.addEventListener('pointerleave', stopDrag);
+    }
+
+    function stopDrag() {
+        if (!state.dragging) return;
+        state.dragging = false;
+        videoWrap.classList.remove('dragging');
+        sendControl(true);
+    }
+
+    function updateAngles() {
+        angleTextEl.textContent =
+            `Азимут: ${state.azimuth.toFixed(1)}° · Высота: ${state.elevation.toFixed(1)}°`;
+    }
+
+    function showError(msg) {
+        if (!msg) {
+            errorEl.style.display = 'none';
+            return;
+        }
+        errorEl.textContent = msg;
+        errorEl.style.display = 'block';
+        clearTimeout(showError._t);
+        showError._t = setTimeout(() => {
+            errorEl.style.display = 'none';
+        }, 5000);
+    }
+
+    // WebRTC подключение к Janus
+    let janusSession = null;
+    let janusHandle = null;
+    const JANUS_URL = 'ws://localhost:8188/janus';
+
+    async function initWebRTC() {
+        // Если Janus недоступен или не загрузился за 2 секунды - используем fallback
+        if (window.JANUS_UNAVAILABLE || (typeof Janus === 'undefined' && !window.JANUS_LOADING)) {
+            console.log('Janus unavailable, using fallback mode');
+            useFallbackMode();
+            return;
+        }
+
+        // Ждём загрузки janus.js максимум 2 секунды
+        if (typeof Janus === 'undefined') {
+            window.JANUS_LOADING = true;
+            let attempts = 0;
+            const maxAttempts = 4; // 2 секунды максимум
+            
+            const checkJanus = setInterval(() => {
+                attempts++;
+                if (typeof Janus !== 'undefined') {
+                    clearInterval(checkJanus);
+                    delete window.JANUS_LOADING;
+                    tryInitJanus();
+                } else if (attempts >= maxAttempts || window.JANUS_UNAVAILABLE) {
+                    clearInterval(checkJanus);
+                    delete window.JANUS_LOADING;
+                    console.log('Janus.js timeout, using fallback mode');
+                    useFallbackMode();
+                }
+            }, 500);
+            return;
+        }
+
+        tryInitJanus();
+    }
+
+    function tryInitJanus() {
+        try {
+            Janus.init({
+                debug: 'all',
+                callback: () => {
+                    console.log('Janus initialized');
+                    connectToJanus();
+                }
+            });
+        } catch (e) {
+            console.warn('Janus init failed, using fallback mode:', e);
+            useFallbackMode();
+        }
+    }
+
+    // Fallback режим: polling кадров через /files/{objectKey}/render
+    let fallbackInterval = null;
+    
+    function useFallbackMode() {
+        console.log('Using fallback mode (polling frames)');
+        extraInfoEl.textContent = 'Mode: Polling (WebRTC unavailable)';
+        
+        // Останавливаем предыдущий интервал если был
+        if (fallbackInterval) {
+            clearInterval(fallbackInterval);
+        }
+        
+        async function loadFrame() {
+            if (!state.currentKey) {
+                console.log('No model selected, waiting... (currentKey:', state.currentKey, ')');
+                return;
+            }
+            
+            const pose = { azimuth: state.azimuth, elevation: state.elevation };
+            if (!state.currentKey || state.currentKey === 'null' || state.currentKey === 'undefined') {
+                console.warn('Invalid currentKey:', state.currentKey);
+                return;
+            }
+            const encodedKey = encodeURIComponent(state.currentKey);
+            const url = `/files/${encodedKey}/render?azimuth=${pose.azimuth}&elevation=${pose.elevation}`;
+            console.log('Loading frame from:', url);
+            console.log('Model key:', state.currentKey, 'Encoded:', encodedKey);
+            
+            console.log('Sending fetch request...');
+            
+            // Добавляем таймаут для запроса (модель большая, может долго рендериться)
+            const controller = new AbortController();
+            let timeoutId = setTimeout(() => {
+                console.warn('Request timeout after 30 seconds');
+                controller.abort();
+            }, 30000); // 30 секунд таймаут для большой модели
+            
+            try {
+                const response = await fetch(url, { signal: controller.signal });
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = null;
+                }
+                console.log('Response received, status:', response.status, response.statusText);
+                console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+            
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Response error:', errorText);
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                console.log('Converting response to blob...');
+                const blob = await response.blob();
+                console.log('Frame loaded, size:', blob.size, 'type:', blob.type);
+                
+                if (blob.size === 0) {
+                    throw new Error('Empty blob received');
+                }
+                
+                const blobUrl = URL.createObjectURL(blob);
+                console.log('Created blob URL:', blobUrl.substring(0, 50) + '...');
+                
+                if (videoEl.src && videoEl.src.startsWith('blob:')) {
+                    const oldUrl = videoEl.src;
+                    URL.revokeObjectURL(oldUrl);
+                    console.log('Revoked old blob URL');
+                }
+                
+                videoEl.src = blobUrl;
+                videoEl.style.display = 'block';
+                videoEl.style.opacity = '1';
+                console.log('Frame displayed, videoEl.src set to:', videoEl.src.substring(0, 50) + '...');
+                extraInfoEl.textContent = 'Mode: Polling | Active';
+                
+                // Проверяем, что элемент действительно виден
+                const rect = videoEl.getBoundingClientRect();
+                console.log('Video element dimensions:', rect.width, 'x', rect.height, 'visible:', rect.width > 0 && rect.height > 0);
+                
+                // Проверяем, что изображение загрузилось
+                videoEl.onload = () => {
+                    console.log('Video element onload fired - image should be visible');
+                };
+                videoEl.onerror = (e) => {
+                    console.error('Video element onerror:', e);
+                };
+            } catch (e) {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = null;
+                }
+                if (e.name === 'AbortError') {
+                    console.error('Frame load timeout after 30 seconds');
+                    extraInfoEl.textContent = 'Mode: Polling | Timeout (model too large?)';
+                } else {
+                    console.error('Frame load error:', e);
+                    console.error('Error name:', e.name);
+                    console.error('Error message:', e.message);
+                    if (e.stack) {
+                        console.error('Error stack:', e.stack);
+                    }
+                    extraInfoEl.textContent = `Mode: Polling | Error: ${e.message || e.name}`;
+                }
+            }
+        
+        // Обновляем каждые ~100мс (10 fps) - модель большая, не перегружаем сервер
+        fallbackInterval = setInterval(loadFrame, 100);
+        
+        // Если модель уже выбрана, загружаем кадр сразу
+        if (state.currentKey) {
+            loadFrame();
+        }
+    }
+
+    function connectToJanus() {
+        const janus = new Janus({
+            server: JANUS_URL,
+            success: (session) => {
+                console.log('Janus session created');
+                janusSession = session;
+                attachToStreaming();
+            },
+            error: (error) => {
+                showError('Ошибка подключения к Janus: ' + error);
+                console.error('Janus connection error:', error);
+                // Переподключение через 3 секунды
+                setTimeout(connectToJanus, 3000);
+            },
+            destroyed: () => {
+                console.log('Janus session destroyed');
+            }
+        });
+    }
+
+    function attachToStreaming() {
+        if (!janusSession) {
+            console.error('No Janus session');
+            return;
+        }
+
+        janusSession.attach({
+            plugin: 'janus.plugin.streaming',
+            success: (pluginHandle) => {
+                console.log('Streaming plugin attached');
+                janusHandle = pluginHandle;
+                watchStream(1); // mountpoint_id = 1 из конфига
+            },
+            error: (error) => {
+                showError('Ошибка подключения к streaming plugin: ' + error);
+                console.error('Streaming plugin error:', error);
+            },
+            iceState: (state) => {
+                console.log('ICE state:', state);
+                if (state === 'connected' || state === 'completed') {
+                    extraInfoEl.textContent = 'WebRTC: connected';
+                }
+            },
+            webrtcState: (on) => {
+                console.log('WebRTC state:', on ? 'up' : 'down');
+                if (on) {
+                    extraInfoEl.textContent = 'WebRTC: active';
+                }
+            },
+            onmessage: (msg, jsep) => {
+                console.log('Streaming message:', msg);
+                if (jsep) {
+                    janusHandle.createAnswer({
+                        jsep: jsep,
+                        media: { audioSend: false, videoSend: false, audioRecv: false, videoRecv: true },
+                        success: (answer) => {
+                            janusHandle.handleRemoteJsep({ jsep: answer });
+                        },
+                        error: (error) => {
+                            showError('Ошибка создания answer: ' + error);
+                            console.error('Answer creation error:', error);
+                        }
+                    });
+                }
+            },
+            onremotestream: (stream) => {
+                console.log('Remote stream received');
+                videoEl.srcObject = stream;
+                extraInfoEl.textContent = 'Stream: active';
+            }
+        });
+    }
+
+    function watchStream(mountpointId) {
+        if (!janusHandle) {
+            console.error('No streaming handle');
+            return;
+        }
+
+        const watch = {
+            request: 'watch',
+            id: mountpointId
+        };
+
+        janusHandle.send({
+            message: watch,
+            success: (result) => {
+                console.log('Watch result:', result);
+                if (result && result.jsep) {
+                    janusHandle.createAnswer({
+                        jsep: result.jsep,
+                        media: { audioSend: false, videoSend: false, audioRecv: false, videoRecv: true },
+                        success: (answer) => {
+                            janusHandle.handleRemoteJsep({ jsep: answer });
+                        },
+                        error: (error) => {
+                            showError('Ошибка создания answer: ' + error);
+                            console.error('Answer creation error:', error);
+                        }
+                    });
+                }
+            },
+            error: (error) => {
+                showError('Ошибка watch: ' + error);
+                console.error('Watch error:', error);
+            }
+        });
+    }
+</script>
+</body>
+</html>
+

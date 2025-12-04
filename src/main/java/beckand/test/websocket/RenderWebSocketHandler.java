@@ -3,87 +3,125 @@ package beckand.test.websocket;
 import beckand.test.DTO.FileDTO;
 import beckand.test.Service.FileService;
 import beckand.test.Service.RenderService;
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import org.springframework.web.socket.*;
+import org.springframework.util.StringUtils;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.InputStream;
-import java.net.URI;
+import java.util.Base64;
+import java.util.Map;
+import java.util.UUID;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class RenderWebSocketHandler implements WebSocketHandler {
+public class RenderWebSocketHandler extends TextWebSocketHandler {
 
     private final FileService fileService;
     private final RenderService renderService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
-        log.debug("WebSocket connected: {}", session.getId());
+        log.info("Render socket connected: {}", session.getId());
     }
 
     @Override
-    public void handleMessage(WebSocketSession session, WebSocketMessage<?> message) {
+    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        log.info("Render socket closed: {} ({})", session.getId(), status);
+    }
+
+    @Override
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
+        RenderCommand command;
         try {
-            if (message instanceof TextMessage textMessage) {
-                URI uri = session.getUri();
-                if (uri == null) return;
-                String path = uri.getPath();
-                String modelId = path.substring(path.lastIndexOf('/') + 1);
-                String query = uri.getQuery();
-                boolean streamMode = query != null && query.contains("stream=true");
+            command = objectMapper.readValue(message.getPayload(), RenderCommand.class);
+        } catch (Exception e) {
+            log.warn("Invalid render command payload: {}", message.getPayload());
+            sendError(session, "Invalid payload: " + e.getMessage());
+            return;
+        }
 
-                JsonNode root = objectMapper.readTree(textMessage.getPayload());
-                String type = root.path("type").asText("");
-                if (!"rotate".equals(type)) return;
-                double azimuth = root.path("azimuth").asDouble(0);
-                double elevation = root.path("elevation").asDouble(0);
-                boolean finalFrame = root.path("final").asBoolean(false);
+        if (!StringUtils.hasText(command.objectKey())) {
+            sendError(session, "objectKey is required");
+            return;
+        }
 
-                if (streamMode) {
-                    try (InputStream is = fileService.getFileContent(modelId)) {
-                        renderService.loadModelIfNeeded(modelId, is);
-                    }
-                    renderService.updateAngles(azimuth, elevation, finalFrame);
-                } else {
-                    FileDTO info = fileService.getFileInfo(modelId);
-                    try (InputStream is = fileService.getFileContent(modelId)) {
-                        byte[] jpeg = renderService.renderModelAdaptive(modelId, is, info.getFileType(), azimuth, elevation, finalFrame);
-                        session.sendMessage(new BinaryMessage(jpeg));
-                    }
-                }
+        try {
+            FileDTO info = fileService.getFileInfo(command.objectKey());
+            try (InputStream stream = fileService.getFileContent(command.objectKey())) {
+                byte[] modelBytes = stream.readAllBytes();
+                byte[] jpeg = renderService.renderModel(
+                        command.objectKey(),
+                        modelBytes,
+                        info.getFileType(),
+                        command.azimuthOrDefault(),
+                        command.elevationOrDefault()
+                );
+                RenderFrame frame = new RenderFrame(
+                        command.frameIdOrDefault(),
+                        command.objectKey(),
+                        "data:image/jpeg;base64," + Base64.getEncoder().encodeToString(jpeg),
+                        command.azimuthOrDefault(),
+                        command.elevationOrDefault(),
+                        System.currentTimeMillis()
+                );
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(frame)));
             }
         } catch (Exception e) {
-            log.error("WebSocket message handling error", e);
-            try {
-                if (session.isOpen()) {
-                    session.close(CloseStatus.SERVER_ERROR);
-                }
-            } catch (Exception ignored) { }
+            log.error("Render error for {}: {}", command.objectKey(), e.getMessage());
+            sendError(session, "Render error: " + e.getMessage());
         }
     }
 
-    @Override
-    public void handleTransportError(WebSocketSession session, Throwable exception) {
-        log.error("WebSocket transport error: {}", session.getId(), exception);
+    private void sendError(WebSocketSession session, String message) {
+        try {
+            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(Map.of(
+                    "error", message,
+                    "timestamp", System.currentTimeMillis()
+            ))));
+        } catch (Exception ignored) {
+            log.warn("Failed to send error frame: {}", message);
+        }
     }
 
-    @Override
-    public void afterConnectionClosed(WebSocketSession session, CloseStatus closeStatus) {
-        log.debug("WebSocket closed: {} - {}", session.getId(), closeStatus);
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record RenderCommand(
+            @JsonProperty("objectKey") String objectKey,
+            @JsonProperty("azimuth") Double azimuth,
+            @JsonProperty("elevation") Double elevation,
+            @JsonProperty("zoom") Double zoom,
+            @JsonProperty("frameId") String frameId
+    ) {
+        double azimuthOrDefault() {
+            return azimuth == null ? 0 : azimuth;
+        }
+
+        double elevationOrDefault() {
+            return elevation == null ? 0 : elevation;
+        }
+
+        String frameIdOrDefault() {
+            return StringUtils.hasText(frameId) ? frameId : UUID.randomUUID().toString();
+        }
     }
 
-    @Override
-    public boolean supportsPartialMessages() {
-        return false;
+    private record RenderFrame(
+            String frameId,
+            String objectKey,
+            String image,
+            double azimuth,
+            double elevation,
+            long renderedAt
+    ) {
     }
 }
-
 

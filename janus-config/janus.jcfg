@@ -1,0 +1,115 @@
+general: {
+    configs_folder = "/etc/janus"
+    plugins_folder = "/usr/lib/janus/plugins"
+    transports_folder = "/usr/lib/janus/transports"
+    events_folder = "/usr/lib/janus/events"
+    loggers_folder = "/usr/lib/janus/loggers"
+    debug_level = 4
+    debug_timestamps = true
+    interface = "0.0.0.0"
+    port = 8088
+    https = false
+    secure_port = 8089
+    server_name = "Atlas Janus Server"
+    session_timeout = 60
+    cached_events = 500
+    string_ids = false
+    session_lifetime = 0
+    reclaim_session_timeout = 0
+    auth_token_timeout = 0
+    accept_timeout = 0
+    lock_debug = false
+    rfc_4588 = false
+    rtcp_mux = true
+    ice_lite = false
+    ice_tcp = true
+    ice_nomination = "regular"
+    ice_keepalive_conncheck = true
+    full_trickle = false
+    ignore_malformed_trickle = false
+    ice_enforce_list = ""
+    ice_ignore_list = ""
+    bundle = true
+    max_nack_queue = 500
+    max_pli_queue = 10
+    twcc_period = 200
+    dtls_mtu = 1200
+    no_webrtc_encryption = false
+    rtp_port_range = "10000-10200"
+    server_string = "Atlas"
+    session_timeout = 60
+    session_lifetime = 0
+    reclaim_session_timeout = 0
+    auth_token_timeout = 0
+    accept_timeout = 0
+    lock_debug = false
+    rfc_4588 = false
+    rtcp_mux = true
+    ice_lite = false
+    ice_tcp = true
+    ice_nomination = "regular"
+    ice_keepalive_conncheck = true
+    full_trickle = false
+    ignore_malformed_trickle = false
+    ice_enforce_list = ""
+    ice_ignore_list = ""
+    bundle = true
+    max_nack_queue = 500
+    max_pli_queue = 10
+    twcc_period = 200
+    dtls_mtu = 1200
+    no_webrtc_encryption = false
+    rtp_port_range = "10000-10200"
+}
+
+media: {
+    rtp_port_range = "10000-10200"
+    no_rtcp_relay = false
+    ipv6 = false
+    ipv6_link_local = false
+    ipv6_priv = false
+    rtp_interface = "0.0.0.0"
+    rtcp_interface = "0.0.0.0"
+    rtp_interface_alternatives = ""
+    rtcp_interface_alternatives = ""
+    force_rtcp_mux = true
+    nat_1_1_mapping = ""
+    ice_ignore_list = ""
+    ice_enforce_list = ""
+    nice_debug = false
+    ice_lite = false
+    full_trickle = false
+    ice_keepalive_conncheck = true
+    ice_nomination = "regular"
+    ice_ignore_list = ""
+    ice_enforce_list = ""
+    rfc_4588 = false
+    rtcp_mux = true
+    bundle = true
+    max_nack_queue = 500
+    max_pli_queue = 10
+    twcc_period = 200
+    dtls_mtu = 1200
+    no_webrtc_encryption = false
+}
+
+plugins: {
+    disable = "libjanus_voicemail.so,libjanus_recordplay.so,libjanus_audiobridge.so,libjanus_videoroom.so,libjanus_voicemail.so,libjanus_sip.so,libjanus_textroom.so,libjanus_nosip.so,libjanus_echotest.so,libjanus_streaming.so,libjanus_videocall.so,libjanus_sip.so,libjanus_textroom.so,libjanus_nosip.so,libjanus_echotest.so"
+    enable = "libjanus_streaming.so"
+}
+
+transports: {
+    disable = "libjanus_http.so,libjanus_pfunix.so,libjanus_pipe.so,libjanus_nanomsg.so,libjanus_mqtt.so,libjanus_rabbitmq.so,libjanus_websockets.so"
+    enable = "libjanus_websockets.so"
+}
+
+loggers: {
+    disable = "libjanus_dlog.so,libjanus_ulog.so,libjanus_pack.so"
+    enable = "libjanus_dlog.so"
+}
+
+events: {
+    disable = "libjanus_sampleevh.so"
+    enable = ""
+}
+

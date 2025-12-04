@@ -1,0 +1,48 @@
+general: {
+    enabled = true
+    interface = "0.0.0.0"
+    port = 8088
+    admin_key = "janusoverlord"
+    string_ids = false
+    rtsp_port = 8554
+    udp_base = 20000
+    rtp_port_range = "20000-20050"
+    rtp_interface = "0.0.0.0"
+    rtcp_interface = "0.0.0.0"
+    ipv6 = false
+    ipv6_link_local = false
+    ipv6_priv = false
+    nat_1_1_mapping = ""
+    ice_ignore_list = ""
+    ice_enforce_list = ""
+    nice_debug = false
+    ice_lite = false
+    full_trickle = false
+    ice_keepalive_conncheck = true
+    ice_nomination = "regular"
+    rfc_4588 = false
+    rtcp_mux = true
+    bundle = true
+    max_nack_queue = 500
+    max_pli_queue = 10
+    twcc_period = 200
+    dtls_mtu = 1200
+    no_webrtc_encryption = false
+    streaming: {
+        mountpoints = [
+            {
+                mountpoint_id = 1
+                name = "mjpeg-stream"
+                description = "MJPEG stream from Spring Boot"
+                type = "rtp"
+                video = true
+                videoport = 5004
+                videopt = 96
+                videocodec = "h264"
+                video_fmtp = "profile-level-id=42e01f"
+                audio = false
+            }
+        ]
+    }
+}
+
