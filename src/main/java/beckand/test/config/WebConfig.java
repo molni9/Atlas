@@ -10,8 +10,14 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        // Статические файлы из /static/ (опционально, Spring Boot делает это автоматически)
         registry.addResourceHandler("/static/**")
                 .addResourceLocations("classpath:/static/");
+        
+        // Игнорируем .well-known запросы от браузеров (не критично)
+        registry.addResourceHandler("/.well-known/**")
+                .addResourceLocations("classpath:/static/.well-known/")
+                .resourceChain(false);
     }
 
     @Override

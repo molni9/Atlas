@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Model Viewer - glTF</title>
+    <style>
+        :root {
+            font-family: "Inter", "Segoe UI", Arial, sans-serif;
+            color: #1d2433;
+            background: #eef1f5;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: linear-gradient(135deg,#eef0f8,#d8dfe8);
+        }
+        #modelList {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            width: 300px;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding: 20px;
+            border-radius: 14px;
+            background: rgba(255,255,255,0.96);
+            box-shadow: 0 25px 60px rgba(0,0,0,0.15);
+            border: 1px solid #dde3ed;
+            z-index: 1000;
+        }
+        #modelList h3 {
+            margin: 0 0 16px;
+            font-size: 1.1rem;
+            color: #243047;
+            border-bottom: 2px solid #edf0f7;
+            padding-bottom: 10px;
+        }
+        .model-item {
+            padding: 10px 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            color: #364156;
+        }
+        .model-item:hover {
+            border-color: #d5ddf0;
+            background: #f4f7ff;
+            transform: translateX(4px);
+        }
+        .model-item.active {
+            border-color: #91b9ff;
+            background: #e6f0ff;
+            color: #1e63d0;
+            font-weight: 600;
+        }
+        #viewer {
+            position: absolute;
+            left: 360px;
+            right: 20px;
+            top: 20px;
+            bottom: 20px;
+            border-radius: 18px;
+            background: #fff;
+            box-shadow: 0 30px 80px rgba(0,0,0,0.18);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        #viewerHeader {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 24px;
+            border-bottom: 1px solid #eef0f6;
+        }
+        #viewerHeader h2 {
+            margin: 0;
+            font-size: 1.2rem;
+            color: #1f2b3e;
+        }
+        #viewport {
+            flex: 1;
+            position: relative;
+            background: #0f1118;
+            cursor: grab;
+        }
+        #viewport.dragging {
+            cursor: grabbing;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(17, 24, 39, 0.85);
+            color: #fff;
+            padding: 16px 24px;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            display: none;
+            z-index: 100;
+        }
+        #errorMessage {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #ffebee;
+            color: #c62828;
+            padding: 12px 18px;
+            border-radius: 10px;
+            display: none;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+            z-index: 2000;
+        }
+        #connectionStatus {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.95);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+        #connectionStatus.connected {
+            color: #10b981;
+        }
+        #connectionStatus.disconnected {
+            color: #ef4444;
+        }
+        #connectionStatus.connecting {
+            color: #f59e0b;
+        }
+        #connectionStatus::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        #connectionStatus.connected::before {
+            background: #10b981;
+        }
+        #connectionStatus.disconnected::before {
+            background: #ef4444;
+        }
+        #connectionStatus.connecting::before {
+            background: #f59e0b;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.7; }
+            50% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+<div id="modelList">
+    <h3>Доступные модели</h3>
+    <div id="modelItems">Загрузка...</div>
+</div>
+
+<div id="viewer">
+    <div id="viewerHeader">
+        <div>
+            <h2 id="modelTitle">Выберите модель</h2>
+            <div style="font-size:0.85rem;color:#6b7486;">Перемещайте мышь, чтобы вращать</div>
+        </div>
+    </div>
+    <div id="viewport">
+        <div id="loading">Загрузка модели...</div>
+    </div>
+</div>
+
+<div id="errorMessage"></div>
+<div id="connectionStatus" class="connecting">Подключение...</div>
+
+<script>
+    // Глобальное состояние приложения
+    const state = {
+        currentKey: null,
+        scene: null,
+        camera: null,
+        renderer: null,
+        model: null,
+        controls: {
+            rotationX: 0,
+            rotationY: 0,
+            isDragging: false,
+            lastX: 0,
+            lastY: 0
+        }
+    };
+
+    // DOM элементы (будут инициализированы после загрузки DOM)
+    let listEl, viewport, loading, errorBox, title, connectionStatus;
+
+    // Загружаем Three.js динамически с проверкой
+    function loadThreeJS() {
+        return new Promise((resolve, reject) => {
+            if (typeof THREE !== 'undefined') {
+                console.log('Three.js already loaded');
+                resolve();
+                return;
+            }
+            
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js';
+            script.onload = function() {
+                console.log('Three.js loaded from cdn.jsdelivr');
+                resolve();
+            };
+            script.onerror = function() {
+                console.warn('Failed to load from cdn.jsdelivr, trying unpkg...');
+                // Пробуем альтернативный CDN
+                const script2 = document.createElement('script');
+                script2.src = 'https://unpkg.com/three@0.160.0/build/three.min.js';
+                script2.onload = function() {
+                    console.log('Three.js loaded from unpkg');
+                    resolve();
+                };
+                script2.onerror = function() {
+                    const errorMsg = document.getElementById('errorMessage');
+                    if (errorMsg) {
+                        errorMsg.textContent = 'Не удалось загрузить Three.js. Проверьте подключение к интернету.';
+                        errorMsg.style.display = 'block';
+                    }
+                    console.error('Failed to load Three.js from all CDNs');
+                    reject(new Error('Failed to load Three.js'));
+                };
+                document.head.appendChild(script2);
+            };
+            document.head.appendChild(script);
+        });
+    }
+
+    // Инициализация Three.js
+    function initThreeJS() {
+        if (typeof THREE === 'undefined') {
+            showError('Three.js не загружен. Проверьте подключение к интернету.');
+            console.error('Three.js library not loaded');
+            return;
+        }
+        
+        if (!viewport) {
+            console.error('viewport not initialized in initThreeJS');
+            showError('Ошибка инициализации: элемент viewport не найден');
+            return;
+        }
+        
+        const width = viewport.clientWidth;
+        const height = viewport.clientHeight;
+
+        // Сцена
+        state.scene = new THREE.Scene();
+        state.scene.background = new THREE.Color(0x0f1118);
+
+        // Камера
+        state.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+        state.camera.position.set(0, 0, 5);
+
+        // Рендерер
+        try {
+            state.renderer = new THREE.WebGLRenderer({ antialias: true });
+            state.renderer.setSize(width, height);
+            state.renderer.setPixelRatio(window.devicePixelRatio);
+            viewport.appendChild(state.renderer.domElement);
+        } catch (err) {
+            showError('Ошибка инициализации WebGL: ' + err.message);
+            console.error('WebGL initialization error:', err);
+            return;
+        }
+
+        // Освещение - улучшенное для лучшей детализации
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        state.scene.add(ambientLight);
+
+        // Основной направленный свет
+        const directionalLight1 = new THREE.DirectionalLight(0xffffff, 1.0);
+        directionalLight1.position.set(5, 5, 5);
+        state.scene.add(directionalLight1);
+        
+        // Дополнительный свет для лучшей детализации
+        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
+        directionalLight2.position.set(-5, 3, -5);
+        state.scene.add(directionalLight2);
+        
+        // Верхний свет
+        const directionalLight3 = new THREE.DirectionalLight(0xffffff, 0.3);
+        directionalLight3.position.set(0, 10, 0);
+        state.scene.add(directionalLight3);
+
+        // Обработка изменения размера
+        window.addEventListener('resize', () => {
+            if (!viewport || !state.camera || !state.renderer) return;
+            const width = viewport.clientWidth;
+            const height = viewport.clientHeight;
+            state.camera.aspect = width / height;
+            state.camera.updateProjectionMatrix();
+            state.renderer.setSize(width, height);
+        });
+
+        // Анимационный цикл
+        function animate() {
+            requestAnimationFrame(animate);
+            if (state.model) {
+                state.model.rotation.y = state.controls.rotationX;
+                state.model.rotation.x = state.controls.rotationY;
+            }
+            state.renderer.render(state.scene, state.camera);
+        }
+        animate();
+    }
+
+    // Загрузка списка моделей
+    async function loadModels() {
+        try {
+            console.log('Fetching models from /files');
+            const response = await fetch('/files', {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+            
+            console.log('Response status:', response.status, response.statusText);
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Error response:', errorText);
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const models = await response.json();
+            console.log('Received models:', models.length);
+            
+            if (!models || !models.length) {
+                listEl.textContent = 'Нет доступных моделей';
+                return;
+            }
+            
+            listEl.innerHTML = '';
+            models.forEach(model => {
+                if (!model.s3ObjectKey) {
+                    console.warn('Model without s3ObjectKey:', model);
+                    return;
+                }
+                const item = document.createElement('div');
+                item.className = 'model-item';
+                item.textContent = model.fileName || model.s3ObjectKey;
+                item.title = model.s3ObjectKey;
+                item.dataset.key = model.s3ObjectKey;
+                item.addEventListener('click', () => selectModel(item, model));
+                listEl.appendChild(item);
+            });
+            
+            const first = listEl.querySelector('.model-item');
+            if (first) {
+                first.click();
+            }
+        } catch (err) {
+            console.error('Error loading models:', err);
+            listEl.textContent = 'Ошибка загрузки списка';
+            showError('Ошибка загрузки списка моделей: ' + err.message);
+        }
+    }
+
+    // Выбор модели
+    async function selectModel(item, model) {
+        console.log('selectModel called:', model.s3ObjectKey);
+        document.querySelectorAll('.model-item').forEach(el => el.classList.remove('active'));
+        item.classList.add('active');
+        state.currentKey = model.s3ObjectKey;
+        if (title) {
+            title.textContent = model.fileName || model.s3ObjectKey;
+        }
+        
+        // Удаляем предыдущую модель
+        if (state.model && state.scene) {
+            state.scene.remove(state.model);
+            state.model.traverse((child) => {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(m => m.dispose());
+                    } else {
+                        child.material.dispose();
+                    }
+                }
+            });
+            state.model = null;
+        }
+        
+        if (loading) {
+            loading.style.display = 'block';
+        }
+        
+        try {
+            console.log('Loading model:', model.s3ObjectKey);
+            await loadModel(model.s3ObjectKey);
+            console.log('Model loaded successfully');
+        } catch (err) {
+            console.error('Error loading model:', err);
+            showError('Ошибка загрузки модели: ' + err.message);
+        } finally {
+            if (loading) {
+                loading.style.display = 'none';
+            }
+        }
+    }
+
+    // Загрузка glTF модели
+    async function loadModel(objectKey) {
+        try {
+            const encodedKey = encodeURIComponent(objectKey);
+            const url = `/files/${encodedKey}/gltf`;
+            console.log('Fetching glTF from:', url);
+            
+            // Создаем AbortController для таймаута
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 минут таймаут
+            
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    },
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                console.log('glTF response status:', response.status, response.statusText);
+            
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('glTF error response:', errorText);
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                console.log('Reading glTF JSON...');
+                const gltfJson = await response.json();
+                console.log('glTF JSON received, size:', JSON.stringify(gltfJson).length, 'bytes');
+                
+                // Создаем glTF из JSON
+                console.log('Parsing glTF data...');
+                const gltf = await parseGltf(gltfJson);
+                console.log('glTF parsed, meshes:', gltf.meshes.length);
+                
+                // Загружаем модель в сцену
+                const modelGroup = new THREE.Group();
+                
+                for (const meshData of gltf.meshes) {
+                    if (!meshData.positions || meshData.positions.length === 0) {
+                        console.warn('Mesh has no positions, skipping');
+                        continue;
+                    }
+                    
+                    const geometry = new THREE.BufferGeometry();
+                    
+                    // Вершины
+                    geometry.setAttribute('position', new THREE.Float32BufferAttribute(meshData.positions, 3));
+                    
+                    // Нормали
+                    if (meshData.normals && meshData.normals.length > 0) {
+                        geometry.setAttribute('normal', new THREE.Float32BufferAttribute(meshData.normals, 3));
+                    } else {
+                        geometry.computeVertexNormals();
+                    }
+                    
+                    // Индексы
+                    if (meshData.indices && meshData.indices.length > 0) {
+                        // Определяем тип индексов
+                        const indexArray = meshData.indices instanceof Uint32Array 
+                            ? new THREE.Uint32BufferAttribute(meshData.indices, 1)
+                            : new THREE.Uint16BufferAttribute(meshData.indices, 1);
+                        geometry.setIndex(indexArray);
+                    }
+                    
+                    geometry.computeBoundingSphere();
+                    
+                    // Улучшенный материал для лучшей детализации
+                    const material = new THREE.MeshStandardMaterial({
+                        color: 0xb4c3d2,
+                        metalness: 0.1,
+                        roughness: 0.7,
+                        side: THREE.DoubleSide,
+                        flatShading: false // Smooth shading для плавных поверхностей
+                    });
+                    
+                    // Убеждаемся, что нормали правильно вычислены
+                    if (!meshData.normals || meshData.normals.length === 0) {
+                        geometry.computeVertexNormals();
+                    } else {
+                        // Проверяем, что нормали валидны
+                        const normals = geometry.getAttribute('normal');
+                        if (normals) {
+                            // Пересчитываем нормали для плавности
+                            geometry.computeVertexNormals();
+                        }
+                    }
+                    
+                    const mesh = new THREE.Mesh(geometry, material);
+                    modelGroup.add(mesh);
+                }
+                
+                if (modelGroup.children.length === 0) {
+                    throw new Error('Не удалось создать меши из glTF данных');
+                }
+                
+                // Центрируем модель
+                const box = new THREE.Box3().setFromObject(modelGroup);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const scale = 2 / maxDim;
+                
+                modelGroup.position.sub(center);
+                modelGroup.scale.multiplyScalar(scale);
+                
+                state.scene.add(modelGroup);
+                state.model = modelGroup;
+                
+                // Сбрасываем вращение
+                state.controls.rotationX = 0;
+                state.controls.rotationY = 0;
+                
+                console.log('Model loaded and added to scene successfully');
+            } catch (fetchErr) {
+                clearTimeout(timeoutId);
+                if (fetchErr.name === 'AbortError') {
+                    throw new Error('Таймаут загрузки модели (5 минут). Модель слишком большая.');
+                }
+                throw fetchErr;
+            }
+        } catch (err) {
+            console.error('Error loading glTF model:', err);
+            throw err;
+        }
+    }
+
+    // Парсинг glTF JSON
+    async function parseGltf(gltf) {
+        console.log('Parsing glTF:', gltf);
+        
+        if (!gltf.buffers || gltf.buffers.length === 0) {
+            throw new Error('glTF не содержит буферов');
+        }
+        
+        const meshes = [];
+        
+        // Получаем данные буфера
+        const bufferUri = gltf.buffers[0].uri;
+        if (!bufferUri) {
+            throw new Error('glTF buffer не содержит URI');
+        }
+        
+        console.log('Decoding buffer, URI length:', bufferUri.length);
+        const bufferData = await decodeBase64Buffer(bufferUri);
+        console.log('Buffer decoded, size:', bufferData.byteLength);
+        
+        if (!gltf.meshes || gltf.meshes.length === 0) {
+            throw new Error('glTF не содержит мешей');
+        }
+        
+        // Обрабатываем каждый mesh
+        for (let meshIdx = 0; meshIdx < gltf.meshes.length; meshIdx++) {
+            const mesh = gltf.meshes[meshIdx];
+            console.log(`Processing mesh ${meshIdx}, primitives:`, mesh.primitives?.length || 0);
+            
+            if (!mesh.primitives || mesh.primitives.length === 0) {
+                console.warn(`Mesh ${meshIdx} has no primitives`);
+                continue;
+            }
+            
+            for (let primIdx = 0; primIdx < mesh.primitives.length; primIdx++) {
+                const primitive = mesh.primitives[primIdx];
+                console.log(`Processing primitive ${primIdx}, attributes:`, Object.keys(primitive.attributes || {}));
+                
+                const positions = extractAccessorData(gltf, bufferData, primitive.attributes?.POSITION);
+                const normals = extractAccessorData(gltf, bufferData, primitive.attributes?.NORMAL);
+                const indices = extractAccessorData(gltf, bufferData, primitive.indices, true);
+                
+                if (!positions || positions.length === 0) {
+                    console.warn(`Primitive ${primIdx} has no positions`);
+                    continue;
+                }
+                
+                console.log(`Primitive ${primIdx}: ${positions.length / 3} vertices, ${indices ? indices.length : 0} indices`);
+                
+                meshes.push({
+                    positions: positions,
+                    normals: normals,
+                    indices: indices
+                });
+            }
+        }
+        
+        if (meshes.length === 0) {
+            throw new Error('Не удалось извлечь меши из glTF');
+        }
+        
+        console.log('Parsed', meshes.length, 'meshes');
+        return { meshes };
+    }
+
+    // Извлечение данных из accessor
+    function extractAccessorData(gltf, bufferData, accessorIndex, isIndices = false) {
+        if (accessorIndex === undefined || accessorIndex === null) {
+            return null;
+        }
+        
+        const accessor = gltf.accessors[accessorIndex];
+        if (!accessor) {
+            console.warn('Accessor not found:', accessorIndex);
+            return null;
+        }
+        
+        const bufferView = gltf.bufferViews[accessor.bufferView];
+        if (!bufferView) {
+            console.warn('BufferView not found:', accessor.bufferView);
+            return null;
+        }
+        
+        const byteOffset = (bufferView.byteOffset || 0) + (accessor.byteOffset || 0);
+        const componentType = accessor.componentType;
+        const type = accessor.type;
+        const count = accessor.count;
+        const components = getComponentCount(type);
+        
+        const dataView = new DataView(bufferData, byteOffset);
+        
+        if (isIndices) {
+            // Определяем тип массива индексов в зависимости от componentType
+            let indices;
+            if (componentType === 5123) { // UNSIGNED_SHORT
+                indices = new Uint16Array(count);
+                for (let i = 0; i < count; i++) {
+                    indices[i] = dataView.getUint16(i * 2, true);
+                }
+            } else if (componentType === 5125) { // UNSIGNED_INT
+                indices = new Uint32Array(count);
+                for (let i = 0; i < count; i++) {
+                    indices[i] = dataView.getUint32(i * 4, true);
+                }
+            } else {
+                console.warn('Unsupported index component type:', componentType);
+                return null;
+            }
+            return indices;
+        } else {
+            const floats = new Float32Array(count * components);
+            const bytesPerComponent = componentType === 5126 ? 4 : 2; // FLOAT = 4, SHORT = 2
+            
+            for (let i = 0; i < count; i++) {
+                for (let c = 0; c < components; c++) {
+                    const byteIndex = (i * components + c) * bytesPerComponent;
+                    if (componentType === 5126) { // FLOAT
+                        floats[i * components + c] = dataView.getFloat32(byteIndex, true);
+                    } else if (componentType === 5121) { // UNSIGNED_BYTE
+                        floats[i * components + c] = dataView.getUint8(byteIndex) / 255.0;
+                    } else if (componentType === 5120) { // BYTE
+                        floats[i * components + c] = dataView.getInt8(byteIndex) / 127.0;
+                    }
+                }
+            }
+            return floats;
+        }
+    }
+
+    function getComponentCount(type) {
+        const map = {
+            'SCALAR': 1,
+            'VEC2': 2,
+            'VEC3': 3,
+            'VEC4': 4
+        };
+        return map[type] || 1;
+    }
+
+    // Декодирование base64 буфера
+    async function decodeBase64Buffer(uri) {
+        const base64 = uri.split(',')[1];
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    // Инициализация обработчиков перетаскивания
+    function initDragControls() {
+        console.log('initDragControls called, viewport:', viewport);
+        if (!viewport) {
+            console.error('viewport not initialized in initDragControls');
+            return;
+        }
+        
+        console.log('Adding drag event listeners to viewport');
+        viewport.addEventListener('pointerdown', (e) => {
+            if (!state.model) return;
+            state.controls.isDragging = true;
+            viewport.classList.add('dragging');
+            state.controls.lastX = e.clientX;
+            state.controls.lastY = e.clientY;
+        });
+
+        window.addEventListener('pointermove', (e) => {
+            if (!state.controls.isDragging || !state.model) return;
+            
+            const deltaX = e.clientX - state.controls.lastX;
+            const deltaY = e.clientY - state.controls.lastY;
+            
+            state.controls.rotationX += deltaX * 0.01;
+            state.controls.rotationY += deltaY * 0.01;
+            state.controls.rotationY = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, state.controls.rotationY));
+            
+            state.controls.lastX = e.clientX;
+            state.controls.lastY = e.clientY;
+        });
+
+        window.addEventListener('pointerup', () => {
+            state.controls.isDragging = false;
+            if (viewport) {
+                viewport.classList.remove('dragging');
+            }
+        });
+    }
+
+    function showError(message) {
+        if (!errorBox) {
+            console.error('Error box not initialized:', message);
+            return;
+        }
+        if (!message) {
+            errorBox.style.display = 'none';
+            return;
+        }
+        errorBox.textContent = message;
+        errorBox.style.display = 'block';
+        setTimeout(() => {
+            if (errorBox) {
+                errorBox.style.display = 'none';
+            }
+        }, 5000);
+    }
+
+    function updateConnectionStatus(status, text) {
+        if (!connectionStatus) {
+            console.warn('Connection status element not initialized');
+            return;
+        }
+        connectionStatus.className = status;
+        connectionStatus.textContent = text;
+    }
+
+    // Инициализация DOM элементов
+    function initDOMElements() {
+        console.log('initDOMElements called, document.readyState:', document.readyState);
+        listEl = document.getElementById('modelItems');
+        viewport = document.getElementById('viewport');
+        loading = document.getElementById('loading');
+        errorBox = document.getElementById('errorMessage');
+        title = document.getElementById('modelTitle');
+        connectionStatus = document.getElementById('connectionStatus');
+        
+        console.log('DOM elements:', {
+            listEl: !!listEl,
+            viewport: !!viewport,
+            loading: !!loading,
+            errorBox: !!errorBox,
+            title: !!title,
+            connectionStatus: !!connectionStatus
+        });
+        
+        if (!viewport) {
+            console.error('CRITICAL: viewport element not found in DOM!');
+        }
+    }
+
+    // Запуск приложения
+    function startApp() {
+        console.log('startApp called');
+        initDOMElements();
+        console.log('DOM elements initialized, viewport:', viewport);
+        
+        if (!viewport) {
+            console.error('viewport is still undefined after initDOMElements');
+            showError('Ошибка: не удалось найти элемент viewport');
+            return;
+        }
+        
+        initDragControls(); // Инициализируем обработчики перетаскивания
+        
+        if (typeof THREE === 'undefined') {
+            console.error('Three.js still not loaded');
+            showError('Three.js не загружен');
+            return;
+        }
+        console.log('Starting app, THREE version:', THREE.REVISION);
+        initThreeJS();
+        loadModels();
+        updateConnectionStatus('connected', 'Готово');
+    }
+    
+    // Ждем загрузки DOM и Three.js
+    console.log('Script loaded, document.readyState:', document.readyState);
+    
+    function initialize() {
+        console.log('initialize() called, document.readyState:', document.readyState);
+        // Убеждаемся, что DOM полностью загружен
+        if (document.readyState === 'loading') {
+            console.log('Waiting for DOMContentLoaded...');
+            document.addEventListener('DOMContentLoaded', async function() {
+                console.log('DOMContentLoaded fired');
+                try {
+                    await loadThreeJS();
+                    startApp();
+                } catch (err) {
+                    console.error('Failed to initialize app:', err);
+                    showError('Ошибка инициализации приложения: ' + err.message);
+                }
+            });
+        } else {
+            // DOM уже загружен
+            console.log('DOM already loaded, loading Three.js...');
+            loadThreeJS().then(startApp).catch(err => {
+                console.error('Failed to initialize app:', err);
+                showError('Ошибка инициализации приложения: ' + err.message);
+            });
+        }
+    }
+    
+    // Запускаем инициализацию
+    initialize();
+    </script>
+</body>
+</html>

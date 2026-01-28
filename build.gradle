@@ -20,13 +20,9 @@ configurations {
     }
 }
 
-ext {
-    lwjglVersion = '3.3.3'
-}
 
 repositories {
     mavenCentral()
-    maven { url "https://jogamp.org/deployment/maven/" } // для JOGL (временно, до миграции)
 }
 
 dependencies {
@@ -68,20 +64,13 @@ dependencies {
     implementation 'org.mapstruct:mapstruct:1.5.5.Final'
     annotationProcessor 'org.mapstruct:mapstruct-processor:1.5.5.Final'
 
-    // JOGL (временно, до миграции)
-    implementation 'org.jogamp.jogl:jogl-all-main:2.4.0'
+    // OBJ парсер для чтения OBJ файлов
     implementation 'de.javagl:obj:0.3.0'
-    implementation 'org.jogamp.gluegen:gluegen-rt-main:2.4.0'
 
-    // Jakarta WebSocket API
+    // Jakarta WebSocket API (для SimpleWebSocketHandler)
     implementation 'jakarta.websocket:jakarta.websocket-api:2.1.1'
     implementation 'org.apache.tomcat.embed:tomcat-embed-websocket:10.1.19'
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
-
-    // LWJGL 3 + OpenGL + EGL (headless GPU)
-    implementation "org.lwjgl:lwjgl:${lwjglVersion}"
-    implementation "org.lwjgl:lwjgl-opengl:${lwjglVersion}"
-    implementation "org.lwjgl:lwjgl-egl:${lwjglVersion}"
 }
 
 tasks.named('test') {

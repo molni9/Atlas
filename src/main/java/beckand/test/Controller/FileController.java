@@ -3,7 +3,7 @@ package beckand.test.Controller;
 import beckand.test.DTO.FileDTO;
 import beckand.test.DTO.FileUploadRequest;
 import beckand.test.Service.FileService;
-import beckand.test.Service.RenderService;
+import beckand.test.Service.ModelConversionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,7 +25,7 @@ import java.util.List;
 public class FileController {
 
     private final FileService fileService;
-    private final RenderService renderService;
+    private final ModelConversionService modelConversionService;
 
     @Operation(summary = "Загрузить файл", description = "Загружает файл с описанием")
     @PostMapping(value = "/upload", consumes = {"multipart/form-data"})
@@ -80,27 +80,32 @@ public class FileController {
         }
     }
 
-    @Operation(summary = "Получить рендер 3D модели", description = "Возвращает изображение рендера 3D модели")
-    @GetMapping("/{objectKey}/render")
-    public ResponseEntity<byte[]> getModelRender(
-            @Parameter(description = "Имя файла для рендеринга", required = true)
-            @PathVariable("objectKey") String objectKey,
-            @RequestParam(defaultValue = "0") double azimuth,
-            @RequestParam(defaultValue = "0") double elevation
+    @Operation(summary = "Получить glTF модель", description = "Конвертирует OBJ модель в glTF формат для клиентского рендеринга")
+    @GetMapping("/{objectKey}/gltf")
+    public ResponseEntity<String> getModelGltf(
+            @Parameter(description = "Имя файла для конвертации", required = true)
+            @PathVariable("objectKey") String objectKey
     ) {
         try {
-            log.info("Rendering model: {}, azimuth: {}, elevation: {}", objectKey, azimuth, elevation);
+            log.info("Converting model to glTF: {}", objectKey);
             FileDTO info = fileService.getFileInfo(objectKey);
+            
+            // Проверяем, что это OBJ файл
+            if (!info.getFileType().contains("obj") && !objectKey.toLowerCase().endsWith(".obj")) {
+                throw new IllegalArgumentException("Only OBJ files are supported for glTF conversion");
+            }
+            
             try (InputStream is = fileService.getFileContent(objectKey)) {
                 byte[] modelBytes = is.readAllBytes();
-                byte[] jpeg = renderService.renderModel(objectKey, modelBytes, info.getFileType(), azimuth, elevation);
+                String gltfJson = modelConversionService.convertObjToGltf(objectKey, modelBytes);
                 return ResponseEntity.ok()
-                        .contentType(MediaType.IMAGE_JPEG)
-                        .body(jpeg);
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(gltfJson);
             }
         } catch (Exception e) {
-            log.error("Error rendering model: {}", objectKey, e);
-            throw new RuntimeException("Error rendering model: " + e.getMessage(), e);
+            log.error("Error converting model to glTF: {}", objectKey, e);
+            throw new RuntimeException("Error converting model to glTF: " + e.getMessage(), e);
         }
     }
 }
