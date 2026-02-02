@@ -21,19 +21,27 @@ import java.util.List;
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/files")
-@Tag(name = "File Controller", description = "Операции с файлами: загрузка, удаление, информация")
+@Tag(name = "Модели (Files)", description = "Загрузка OBJ-моделей, просмотр списка моделей, удаление и информация о файлах")
 public class FileController {
 
     private final FileService fileService;
     private final ModelConversionService modelConversionService;
 
-    @Operation(summary = "Загрузить файл", description = "Загружает файл с описанием")
+    @Operation(
+            summary = "Загрузить модель (OBJ)",
+            description = "Загружает OBJ-файл в хранилище MinIO. Поддерживаются большие файлы (до 2 ГБ). " +
+                    "После загрузки модель появится в списке и будет доступна для просмотра и конвертации в glTF."
+    )
     @PostMapping(value = "/upload", consumes = {"multipart/form-data"})
     public ResponseEntity<FileDTO> uploadFile(@ModelAttribute FileUploadRequest request) {
         return ResponseEntity.ok(fileService.uploadFile(request));
     }
 
-    @Operation(summary = "Список файлов", description = "Возвращает список доступных файлов из MinIO")
+    @Operation(
+            summary = "Список моделей",
+            description = "Возвращает список всех загруженных OBJ-моделей из MinIO. " +
+                    "Для каждой модели: имя файла, размер, тип, ключ (s3ObjectKey) для запросов glTF и информации."
+    )
     @GetMapping("")
     public ResponseEntity<List<FileDTO>> listFiles() {
         return ResponseEntity.ok(fileService.getAllFiles());
