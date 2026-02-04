@@ -27,7 +27,6 @@ public class ModelConversionService {
 
 
     public String convertObjToGltf(String objectKey, byte[] objBytes) {
-        // Проверяем кэш
         String cacheKey = objectKey + "_gltf";
         if (gltfCache.containsKey(cacheKey)) {
             return gltfCache.get(cacheKey);
@@ -72,7 +71,7 @@ public class ModelConversionService {
                     continue;
                 }
                 
-                // Триангулируем полигон
+                // полигон
                 for (int t = 1; t < face.getNumVertices() - 1; t++) {
                     int v0 = face.getVertexIndex(0);
                     int v1 = face.getVertexIndex(t);
@@ -82,20 +81,18 @@ public class ModelConversionService {
                     indices.add(v1);
                     indices.add(v2);
                     
-                    // Используем нормали из OBJ, если они есть, иначе вычисляем
+
                     float[] normal;
                     if (hasNormals && objNormals != null) {
-                        // Пытаемся получить нормали из OBJ для вершин треугольника
+
                         try {
                             int n0 = face.getNormalIndex(0);
                             int n1 = face.getNormalIndex(t);
                             int n2 = face.getNormalIndex(t + 1);
                             
-                            // Проверяем, что индексы нормалей валидны
-                            if (n0 >= 0 && n0 < objNormals.size() && 
+                            if (n0 >= 0 && n0 < objNormals.size() &&
                                 n1 >= 0 && n1 < objNormals.size() && 
                                 n2 >= 0 && n2 < objNormals.size()) {
-                                // Усредняем нормали трех вершин треугольника
                                 float[] n0v = objNormals.get(n0);
                                 float[] n1v = objNormals.get(n1);
                                 float[] n2v = objNormals.get(n2);
@@ -114,7 +111,6 @@ public class ModelConversionService {
                                     normal[2] /= length;
                                 }
                             } else {
-                                // Индексы нормалей невалидны, вычисляем нормаль
                                 normal = calculateNormal(vertices.get(v0), vertices.get(v1), vertices.get(v2));
                             }
                         } catch (Exception e) {
@@ -128,7 +124,6 @@ public class ModelConversionService {
                 }
             }
             
-            // Определяем тип индексов: если больше 65535, используем int (4 байта), иначе short (2 байта)
             boolean useIntIndices = vertices.size() > 65535;
             
             // Создаем glTF JSON с использованием нормалей из OBJ
@@ -414,13 +409,11 @@ public class ModelConversionService {
         // Индексы
         for (Integer i : indices) {
             if (useIntIndices) {
-                // Используем int (4 байта)
                 buffer[offset++] = (byte) (i & 0xFF);
                 buffer[offset++] = (byte) ((i >> 8) & 0xFF);
                 buffer[offset++] = (byte) ((i >> 16) & 0xFF);
                 buffer[offset++] = (byte) ((i >> 24) & 0xFF);
             } else {
-                // Используем short (2 байта)
                 short s = i.shortValue();
                 buffer[offset++] = (byte) (s & 0xFF);
                 buffer[offset++] = (byte) ((s >> 8) & 0xFF);
