@@ -3,9 +3,10 @@ package beckand.test.Service;
 import de.javagl.obj.Obj;
 import de.javagl.obj.ObjFace;
 import de.javagl.obj.ObjReader;
-import de.javagl.obj.ObjUtils;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStreamReader;
@@ -13,30 +14,22 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Сервис для конвертации OBJ моделей в glTF формат
- */
-@Slf4j
+
 @Service
 public class ModelConversionService {
     
     private final Map<String, String> gltfCache = new ConcurrentHashMap<>();
 
-    /**
-     * Конвертирует OBJ файл в glTF JSON строку
-     * @param objectKey ключ объекта для кэширования
-     * @param objBytes байты OBJ файла
-     * @return glTF JSON строка
-     */
+
     public String convertObjToGltf(String objectKey, byte[] objBytes) {
         // Проверяем кэш
         String cacheKey = objectKey + "_gltf";
         if (gltfCache.containsKey(cacheKey)) {
-            log.debug("Returning cached glTF for: {}", objectKey);
             return gltfCache.get(cacheKey);
         }
         
@@ -51,14 +44,7 @@ public class ModelConversionService {
     private String convertObjToGltfInternal(byte[] objBytes) {
         try (Reader reader = new InputStreamReader(new ByteArrayInputStream(objBytes), StandardCharsets.UTF_8)) {
             Obj obj = ObjReader.read(reader);
-            
-            log.info("Converting OBJ to glTF: {} vertices, {} normals, {} faces", 
-                obj.getNumVertices(), obj.getNumNormals(), obj.getNumFaces());
-            
-            // Проверяем наличие нормалей в OBJ
             boolean hasNormals = obj.getNumNormals() > 0;
-            log.info("OBJ file has normals: {}", hasNormals);
-            
             // Нормализуем вершины
             List<float[]> vertices = normalizeVertices(obj);
             
@@ -132,8 +118,6 @@ public class ModelConversionService {
                                 normal = calculateNormal(vertices.get(v0), vertices.get(v1), vertices.get(v2));
                             }
                         } catch (Exception e) {
-                            // Если не удалось получить нормали из OBJ, вычисляем
-                            log.debug("Could not get normals from OBJ face, computing: {}", e.getMessage());
                             normal = calculateNormal(vertices.get(v0), vertices.get(v1), vertices.get(v2));
                         }
                     } else {
@@ -151,7 +135,6 @@ public class ModelConversionService {
             return buildGltfJson(vertices, indices, faceNormals, objNormals, useIntIndices);
             
         } catch (Exception e) {
-            log.error("Error converting OBJ to glTF", e);
             throw new IllegalStateException("Unable to convert OBJ to glTF: " + e.getMessage(), e);
         }
     }
@@ -328,87 +311,48 @@ public class ModelConversionService {
             }
         }
         
-        // Кодируем данные в base64
-        String vertexBase64 = encodeFloatArrayToBase64(vertexBuffer);
-        String normalBase64 = encodeFloatArrayToBase64(normalBuffer);
-        String indexBase64 = encodeIntArrayToBase64(indices, useIntIndices);
-        
         // Вычисляем размеры буферов
-        int vertexBufferSize = vertexBuffer.size() * 4; // float = 4 bytes
+        int vertexBufferSize = vertexBuffer.size() * 4;
         int normalBufferSize = normalBuffer.size() * 4;
         int indexBufferSize = indices.size() * (useIntIndices ? 4 : 2);
-        
-        // Создаем glTF JSON
-        StringBuilder gltf = new StringBuilder();
-        gltf.append("{\n");
-        gltf.append("  \"asset\": {\n");
-        gltf.append("    \"version\": \"2.0\",\n");
-        gltf.append("    \"generator\": \"OBJ to glTF Converter\"\n");
-        gltf.append("  },\n");
-        gltf.append("  \"scene\": 0,\n");
-        gltf.append("  \"scenes\": [{\n");
-        gltf.append("    \"nodes\": [0]\n");
-        gltf.append("  }],\n");
-        gltf.append("  \"nodes\": [{\n");
-        gltf.append("    \"mesh\": 0\n");
-        gltf.append("  }],\n");
-        gltf.append("  \"meshes\": [{\n");
-        gltf.append("    \"primitives\": [{\n");
-        gltf.append("      \"attributes\": {\n");
-        gltf.append("        \"POSITION\": 0,\n");
-        gltf.append("        \"NORMAL\": 1\n");
-        gltf.append("      },\n");
-        gltf.append("      \"indices\": 2\n");
-        gltf.append("    }]\n");
-        gltf.append("  }],\n");
-        gltf.append("  \"accessors\": [\n");
-        gltf.append("    {\n");
-        gltf.append("      \"bufferView\": 0,\n");
-        gltf.append("      \"componentType\": 5126,\n");
-        gltf.append("      \"count\": ").append(vertices.size()).append(",\n");
-        gltf.append("      \"type\": \"VEC3\",\n");
-        gltf.append("      \"max\": [1.0, 1.0, 1.0],\n");
-        gltf.append("      \"min\": [-1.0, -1.0, -1.0]\n");
-        gltf.append("    },\n");
-        gltf.append("    {\n");
-        gltf.append("      \"bufferView\": 1,\n");
-        gltf.append("      \"componentType\": 5126,\n");
-        gltf.append("      \"count\": ").append(vertices.size()).append(",\n");
-        gltf.append("      \"type\": \"VEC3\"\n");
-        gltf.append("    },\n");
-        gltf.append("    {\n");
-        gltf.append("      \"bufferView\": 2,\n");
-        gltf.append("      \"componentType\": ").append(useIntIndices ? 5125 : 5123).append(",\n"); // 5125 = UNSIGNED_INT, 5123 = UNSIGNED_SHORT
-        gltf.append("      \"count\": ").append(indices.size()).append(",\n");
-        gltf.append("      \"type\": \"SCALAR\"\n");
-        gltf.append("    }\n");
-        gltf.append("  ],\n");
-        gltf.append("  \"bufferViews\": [\n");
-        gltf.append("    {\n");
-        gltf.append("      \"buffer\": 0,\n");
-        gltf.append("      \"byteOffset\": 0,\n");
-        gltf.append("      \"byteLength\": ").append(vertexBufferSize).append("\n");
-        gltf.append("    },\n");
-        gltf.append("    {\n");
-        gltf.append("      \"buffer\": 0,\n");
-        gltf.append("      \"byteOffset\": ").append(vertexBufferSize).append(",\n");
-        gltf.append("      \"byteLength\": ").append(normalBufferSize).append("\n");
-        gltf.append("    },\n");
-        gltf.append("    {\n");
-        gltf.append("      \"buffer\": 0,\n");
-        gltf.append("      \"byteOffset\": ").append(vertexBufferSize + normalBufferSize).append(",\n");
-        gltf.append("      \"byteLength\": ").append(indexBufferSize).append("\n");
-        gltf.append("    }\n");
-        gltf.append("  ],\n");
-        gltf.append("  \"buffers\": [{\n");
-        gltf.append("    \"uri\": \"data:application/octet-stream;base64,");
-        gltf.append(encodeBuffersToBase64(vertexBuffer, normalBuffer, indices, useIntIndices));
-        gltf.append("\",\n");
-        gltf.append("    \"byteLength\": ").append(vertexBufferSize + normalBufferSize + indexBufferSize).append("\n");
-        gltf.append("  }]\n");
-        gltf.append("}");
-        
-        return gltf.toString();
+        int totalBufferLength = vertexBufferSize + normalBufferSize + indexBufferSize;
+
+        // Собираем glTF как структуру данных, JSON через Jackson
+        Map<String, Object> asset = new LinkedHashMap<>();
+        asset.put("version", "2.0");
+        asset.put("generator", "OBJ to glTF Converter");
+
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("asset", asset);
+        root.put("scene", 0);
+        root.put("scenes", List.of(Map.of("nodes", List.of(0))));
+        root.put("nodes", List.of(Map.of("mesh", 0)));
+        root.put("meshes", List.of(Map.of("primitives", List.of(
+                Map.of("attributes", Map.of("POSITION", 0, "NORMAL", 1), "indices", 2)
+        ))));
+
+        List<Map<String, Object>> accessors = List.of(
+                Map.of("bufferView", 0, "componentType", 5126, "count", vertices.size(), "type", "VEC3", "max", List.of(1.0, 1.0, 1.0), "min", List.of(-1.0, -1.0, -1.0)),
+                Map.of("bufferView", 1, "componentType", 5126, "count", vertices.size(), "type", "VEC3"),
+                Map.of("bufferView", 2, "componentType", useIntIndices ? 5125 : 5123, "count", indices.size(), "type", "SCALAR")
+        );
+        root.put("accessors", accessors);
+
+        List<Map<String, Object>> bufferViews = List.of(
+                Map.of("buffer", 0, "byteOffset", 0, "byteLength", vertexBufferSize),
+                Map.of("buffer", 0, "byteOffset", vertexBufferSize, "byteLength", normalBufferSize),
+                Map.of("buffer", 0, "byteOffset", vertexBufferSize + normalBufferSize, "byteLength", indexBufferSize)
+        );
+        root.put("bufferViews", bufferViews);
+
+        String bufferUri = "data:application/octet-stream;base64," + encodeBuffersToBase64(vertexBuffer, normalBuffer, indices, useIntIndices);
+        root.put("buffers", List.of(Map.of("uri", bufferUri, "byteLength", totalBufferLength)));
+
+        try {
+            return new ObjectMapper().writeValueAsString(root);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize glTF to JSON", e);
+        }
     }
     
     private String encodeFloatArrayToBase64(List<Float> floats) {

@@ -10,8 +10,5 @@ public class FileUploadRequest {
 
     @Schema(description = "OBJ-файл модели (до 2 ГБ)", type = "string", format = "binary", required = true)
     private MultipartFile file;
-
-    @Schema(description = "Описание модели (необязательно)")
-    private String description;
 }
 

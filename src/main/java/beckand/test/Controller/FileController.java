@@ -8,8 +8,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -17,7 +15,6 @@ import org.springframework.web.bind.annotation.*;
 import java.io.InputStream;
 import java.util.List;
 
-@Slf4j
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/files")
@@ -66,28 +63,6 @@ public class FileController {
         return ResponseEntity.ok(fileService.getFileInfo(objectKey));
     }
 
-    @Operation(summary = "Получить содержимое файла", description = "Возвращает содержимое файла по имени")
-    @GetMapping("/{objectKey}/content")
-    public ResponseEntity<InputStreamResource> getFileContent(
-            @Parameter(description = "Имя файла для получения содержимого", required = true)
-            @PathVariable("objectKey") String objectKey
-    ) {
-        try {
-            FileDTO fileInfo = fileService.getFileInfo(objectKey);
-            InputStream stream = fileService.getFileContent(objectKey);
-
-            return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(fileInfo.getFileType()))
-                    .header("Content-Disposition", "inline")
-                    .header("Access-Control-Allow-Origin", "*")
-                    .header("Access-Control-Allow-Methods", "GET")
-                    .body(new InputStreamResource(stream));
-        } catch (Exception e) {
-            log.error("Error getting file content: {}", objectKey, e);
-            throw new RuntimeException("Error getting file content: " + e.getMessage(), e);
-        }
-    }
-
     @Operation(summary = "Получить glTF модель", description = "Конвертирует OBJ модель в glTF формат для клиентского рендеринга")
     @GetMapping("/{objectKey}/gltf")
     public ResponseEntity<String> getModelGltf(
@@ -95,14 +70,10 @@ public class FileController {
             @PathVariable("objectKey") String objectKey
     ) {
         try {
-            log.info("Converting model to glTF: {}", objectKey);
             FileDTO info = fileService.getFileInfo(objectKey);
-            
-            // Проверяем, что это OBJ файл
             if (!info.getFileType().contains("obj") && !objectKey.toLowerCase().endsWith(".obj")) {
                 throw new IllegalArgumentException("Only OBJ files are supported for glTF conversion");
             }
-            
             try (InputStream is = fileService.getFileContent(objectKey)) {
                 byte[] modelBytes = is.readAllBytes();
                 String gltfJson = modelConversionService.convertObjToGltf(objectKey, modelBytes);
@@ -112,7 +83,6 @@ public class FileController {
                         .body(gltfJson);
             }
         } catch (Exception e) {
-            log.error("Error converting model to glTF: {}", objectKey, e);
             throw new RuntimeException("Error converting model to glTF: " + e.getMessage(), e);
         }
     }

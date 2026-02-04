@@ -193,6 +193,8 @@
         camera: null,
         renderer: null,
         model: null,
+        /** Кэш распарсенного glTF по s3ObjectKey — при повторном выборе модели не грузим с сервера */
+        gltfCache: {},
         controls: {
             rotationX: 0,
             rotationY: 0,
@@ -357,7 +359,7 @@
                 }
                 const item = document.createElement('div');
                 item.className = 'model-item';
-                item.textContent = model.fileName || model.s3ObjectKey;
+                item.textContent = model.s3ObjectKey;
                 item.title = model.s3ObjectKey;
                 item.dataset.key = model.s3ObjectKey;
                 item.addEventListener('click', () => selectModel(item, model));
@@ -382,7 +384,7 @@
         item.classList.add('active');
         state.currentKey = model.s3ObjectKey;
         if (title) {
-            title.textContent = model.fileName || model.s3ObjectKey;
+            title.textContent = model.s3ObjectKey;
         }
         
         // Удаляем предыдущую модель
@@ -419,43 +421,55 @@
         }
     }
 
-    // Загрузка glTF модели
+    // Загрузка glTF модели (с кэшем: повторный выбор той же модели не грузит с сервера)
     async function loadModel(objectKey) {
         try {
-            const encodedKey = encodeURIComponent(objectKey);
-            const url = `/files/${encodedKey}/gltf`;
-            console.log('Fetching glTF from:', url);
+            let gltf = state.gltfCache[objectKey];
             
-            // Создаем AbortController для таймаута
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 минут таймаут
-            
-            try {
-                const response = await fetch(url, {
-                    method: 'GET',
-                    headers: {
-                        'Accept': 'application/json'
-                    },
-                    signal: controller.signal
-                });
+            if (gltf) {
+                console.log('Using cached glTF for:', objectKey);
+            } else {
+                const encodedKey = encodeURIComponent(objectKey);
+                const url = `/files/${encodedKey}/gltf`;
+                console.log('Fetching glTF from:', url);
                 
-                clearTimeout(timeoutId);
-                console.log('glTF response status:', response.status, response.statusText);
-            
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    console.error('glTF error response:', errorText);
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 минут таймаут
+                
+                try {
+                    const response = await fetch(url, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json'
+                        },
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    console.log('glTF response status:', response.status, response.statusText);
+                
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        console.error('glTF error response:', errorText);
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    
+                    console.log('Reading glTF JSON...');
+                    const gltfJson = await response.json();
+                    console.log('glTF JSON received, size:', JSON.stringify(gltfJson).length, 'bytes');
+                    
+                    console.log('Parsing glTF data...');
+                    gltf = await parseGltf(gltfJson);
+                    console.log('glTF parsed, meshes:', gltf.meshes.length);
+                    state.gltfCache[objectKey] = gltf;
+                } catch (fetchErr) {
+                    clearTimeout(timeoutId);
+                    if (fetchErr.name === 'AbortError') {
+                        throw new Error('Таймаут загрузки модели (5 минут). Модель слишком большая.');
+                    }
+                    throw fetchErr;
                 }
-                
-                console.log('Reading glTF JSON...');
-                const gltfJson = await response.json();
-                console.log('glTF JSON received, size:', JSON.stringify(gltfJson).length, 'bytes');
-                
-                // Создаем glTF из JSON
-                console.log('Parsing glTF data...');
-                const gltf = await parseGltf(gltfJson);
-                console.log('glTF parsed, meshes:', gltf.meshes.length);
+            }
                 
                 // Загружаем модель в сцену
                 const modelGroup = new THREE.Group();
@@ -536,13 +550,6 @@
                 state.controls.rotationY = 0;
                 
                 console.log('Model loaded and added to scene successfully');
-            } catch (fetchErr) {
-                clearTimeout(timeoutId);
-                if (fetchErr.name === 'AbortError') {
-                    throw new Error('Таймаут загрузки модели (5 минут). Модель слишком большая.');
-                }
-                throw fetchErr;
-            }
         } catch (err) {
             console.error('Error loading glTF model:', err);
             throw err;
