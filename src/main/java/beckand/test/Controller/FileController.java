@@ -79,7 +79,6 @@ public class FileController {
                 String gltfJson = modelConversionService.convertObjToGltf(objectKey, modelBytes);
                 return ResponseEntity.ok()
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("Access-Control-Allow-Origin", "*")
                         .body(gltfJson);
             }
         } catch (Exception e) {

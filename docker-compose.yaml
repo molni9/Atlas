@@ -1,27 +1,23 @@
 services:
-  test:
-    image: test:latest
+  app:
+    image: atlas-app:latest
     build:
       context: .
-      dockerfile: Dockerfile.gpu
-      args:
-        DOCKER_BUILDKIT: 1
+      dockerfile: Dockerfile.app
     environment:
-      - minio.endpoint=http://minio:9000
-      - minio.access-key=admin
-      - minio.secret-key=password
-      - minio.bucket=my-files
-      - spring.datasource.url=jdbc:postgresql://postgres:5432/mydb
-      - spring.datasource.username=user
-      - spring.datasource.password=password
-      - server.port=8010
-      - render.width=960
-      - render.height=540
-      - render.jpeg.quality=0.8
-      - render.angle.step.deg=2
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: admin
+      MINIO_SECRET_KEY: password
+      MINIO_BUCKET: my-files
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/atlas
+      SPRING_DATASOURCE_USERNAME: user
+      SPRING_DATASOURCE_PASSWORD: password
+      SERVER_PORT: 8010
     depends_on:
-      - minio
-      - postgres
+      minio:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     ports:
       - "8010:8010"
   minio:
@@ -37,8 +33,8 @@ services:
       - ~/minio/data:/data
     command: server /data --console-address ":9001"
   postgres:
-    image: postgres:17.4
-    restart: "no"
+    image: postgres:17
+    restart: unless-stopped
     ports:
       - "5432:5432"
     volumes:
@@ -46,7 +42,7 @@ services:
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: mydb
+      POSTGRES_DB: atlas
     healthcheck:
       test: pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB
       interval: 10s

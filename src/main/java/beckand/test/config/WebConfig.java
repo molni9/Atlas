@@ -10,7 +10,6 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        // Статические файлы из /static/ (опционально, Spring Boot делает это автоматически)
         registry.addResourceHandler("/static/**")
                 .addResourceLocations("classpath:/static/");
     }
@@ -18,7 +17,7 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/**")
-                .allowedOriginPatterns("http://localhost:[*]")
+                .allowedOriginPatterns("http://localhost:[*]", "http://127.0.0.1:[*]", "http://10.3.24.120:[*]")
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true);
