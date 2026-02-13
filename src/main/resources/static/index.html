@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Viewer — серверный рендер</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        #modelList {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(30, 30, 50, 0.95);
+            padding: 20px;
+            border-radius: 12px;
+            width: 280px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        #modelList h3 {
+            margin: 0 0 16px 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            font-weight: 600;
+        }
+        .model-item {
+            padding: 12px 14px;
+            cursor: pointer;
+            border-radius: 8px;
+            margin: 4px 0;
+            transition: background 0.15s;
+        }
+        .model-item:hover {
+            background: rgba(255,255,255,0.06);
+        }
+        .model-item.active {
+            background: rgba(100, 150, 255, 0.2);
+            color: #7eb8ff;
+        }
+        #viewer {
+            position: absolute;
+            left: 320px;
+            top: 40px;
+            right: 40px;
+            bottom: 40px;
+            background: #0f0f1a;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+        }
+        #modelImage {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            object-position: center;
+            user-select: none;
+            cursor: grab;
+            image-rendering: auto;
+        }
+        #modelImage.grabbing { cursor: grabbing; }
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.85);
+            color: #fff;
+            padding: 16px 24px;
+            border-radius: 10px;
+            display: none;
+            font-size: 15px;
+        }
+        #errorMessage {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(200, 60, 60, 0.95);
+            color: #fff;
+            padding: 14px 20px;
+            border-radius: 10px;
+            display: none;
+            max-width: 360px;
+        }
+    </style>
+</head>
+<body>
+<div id="modelList">
+    <h3>Модели</h3>
+    <div id="noModels">Загрузка списка…</div>
+</div>
+<div id="viewer">
+    <img id="modelImage" src="" alt="Рендер" draggable="false" style="display:none;">
+</div>
+<div id="loading">Загрузка…</div>
+<div id="errorMessage"></div>
+
+<script>
+    const img = document.getElementById('modelImage');
+    const viewer = document.getElementById('viewer');
+
+    let ws = null;
+    let currentModelId = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 5;
+    const RECONNECT_DELAY = 2000;
+
+    const MOUSE_SENSITIVITY = 0.1;
+    const VELOCITY_DECAY = 0.85;
+    const MIN_VELOCITY = 0.01;
+    const MAX_VELOCITY = 1.0;
+    const UPDATE_INTERVAL = 32;
+    const MIN_ANGLE_CHANGE = 0.5;
+
+    const rotationState = {
+        azimuth: 0,
+        elevation: 0,
+        velocityX: 0,
+        velocityY: 0,
+        isDragging: false,
+        lastFrameTime: performance.now(),
+        lastUpdateTime: 0,
+        lastSentAzimuth: 0,
+        lastSentElevation: 0
+    };
+
+    let lastSuccessfulUpdate = 0;
+    let pendingUpdate = false;
+
+    function showError(msg) {
+        const el = document.getElementById('errorMessage');
+        el.textContent = msg;
+        el.style.display = 'block';
+        setTimeout(() => { el.style.display = 'none'; }, 5000);
+    }
+
+    function setLoading(loading) {
+        document.getElementById('loading').style.display = loading ? 'block' : 'none';
+    }
+
+    function setModelSelectionEnabled(enabled) {
+        document.querySelectorAll('.model-item').forEach(el => {
+            el.style.pointerEvents = enabled ? 'auto' : 'none';
+            el.style.opacity = enabled ? '1' : '0.5';
+        });
+    }
+
+    function connectWebSocket(modelId) {
+        if (ws) ws.close();
+
+        setLoading(true);
+        setModelSelectionEnabled(false);
+
+        rotationState.azimuth = 0;
+        rotationState.elevation = 0;
+        rotationState.velocityX = 0;
+        rotationState.velocityY = 0;
+        lastSuccessfulUpdate = 0;
+        pendingUpdate = false;
+
+        const wsUrl = `ws://${window.location.host}/ws/render/${encodeURIComponent(modelId)}`;
+        ws = new WebSocket(wsUrl);
+        ws.binaryType = 'blob';
+
+        ws.onopen = () => {
+            reconnectAttempts = 0;
+            const msg = { type: 'rotate', azimuth: 0, elevation: 0 };
+            ws.send(JSON.stringify(msg));
+        };
+
+        ws.onmessage = (event) => {
+            if (event.data instanceof Blob) {
+                const url = URL.createObjectURL(event.data);
+                if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+                img.src = url;
+                img.style.display = 'block';
+                setLoading(false);
+                setModelSelectionEnabled(true);
+                if (pendingUpdate) sendRotate(rotationState.azimuth, rotationState.elevation);
+            }
+        };
+
+        ws.onerror = () => {
+            showError('Ошибка соединения');
+            setLoading(false);
+            setModelSelectionEnabled(true);
+            if (currentModelId) scheduleReconnect(currentModelId);
+        };
+
+        ws.onclose = (e) => {
+            setLoading(false);
+            setModelSelectionEnabled(true);
+            if (e.code !== 1000 && currentModelId) scheduleReconnect(currentModelId);
+        };
+    }
+
+    function scheduleReconnect(modelId) {
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            showError('Не удалось подключиться. Обновите страницу.');
+            return;
+        }
+        reconnectAttempts++;
+        setTimeout(() => connectWebSocket(modelId), RECONNECT_DELAY * reconnectAttempts);
+    }
+
+    function sendRotate(azimuth, elevation, isFinal) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            pendingUpdate = true;
+            return;
+        }
+        const now = performance.now();
+        if (now - lastSuccessfulUpdate < UPDATE_INTERVAL) {
+            pendingUpdate = true;
+            return;
+        }
+        try {
+            ws.send(JSON.stringify({
+                type: 'rotate',
+                azimuth: Math.round(azimuth * 10) / 10,
+                elevation: Math.round(elevation * 10) / 10,
+                final: !!isFinal
+            }));
+            lastSuccessfulUpdate = now;
+            pendingUpdate = false;
+        } catch (e) {
+            pendingUpdate = true;
+        }
+    }
+
+    function handleMouseMove(e) {
+        if (!rotationState.isDragging) return;
+        const dx = e.movementX ?? 0;
+        const dy = e.movementY ?? 0;
+        const s = MOUSE_SENSITIVITY * (window.devicePixelRatio || 1);
+        rotationState.azimuth -= dx * s;
+        rotationState.elevation += dy * s;
+        rotationState.velocityX = -dx * s * 0.1;
+        rotationState.velocityY = dy * s * 0.1;
+        rotationState.velocityX = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, rotationState.velocityX));
+        rotationState.velocityY = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, rotationState.velocityY));
+        rotationState.azimuth = ((rotationState.azimuth % 360) + 360) % 360;
+        rotationState.elevation = Math.max(-80, Math.min(80, rotationState.elevation));
+
+        const now = performance.now();
+        if (now - rotationState.lastUpdateTime >= UPDATE_INTERVAL) {
+            const change = Math.abs(rotationState.azimuth - rotationState.lastSentAzimuth) +
+                Math.abs(rotationState.elevation - rotationState.lastSentElevation);
+            if (change >= MIN_ANGLE_CHANGE) {
+                sendRotate(rotationState.azimuth, rotationState.elevation);
+                rotationState.lastSentAzimuth = rotationState.azimuth;
+                rotationState.lastSentElevation = rotationState.elevation;
+                rotationState.lastUpdateTime = now;
+            }
+        }
+    }
+
+    function updateFrame() {
+        const now = performance.now();
+        const dt = Math.min(now - rotationState.lastFrameTime, 32) / 16.67;
+
+        if (!rotationState.isDragging &&
+            (Math.abs(rotationState.velocityX) > MIN_VELOCITY || Math.abs(rotationState.velocityY) > MIN_VELOCITY)) {
+            rotationState.azimuth += rotationState.velocityX * dt;
+            rotationState.elevation += rotationState.velocityY * dt;
+            rotationState.velocityX *= Math.pow(VELOCITY_DECAY, dt);
+            rotationState.velocityY *= Math.pow(VELOCITY_DECAY, dt);
+            rotationState.azimuth = ((rotationState.azimuth % 360) + 360) % 360;
+            rotationState.elevation = Math.max(-80, Math.min(80, rotationState.elevation));
+
+            if (now - rotationState.lastUpdateTime >= UPDATE_INTERVAL) {
+                const change = Math.abs(rotationState.azimuth - rotationState.lastSentAzimuth) +
+                    Math.abs(rotationState.elevation - rotationState.lastSentElevation);
+                if (change >= MIN_ANGLE_CHANGE) {
+                    sendRotate(rotationState.azimuth, rotationState.elevation);
+                    rotationState.lastSentAzimuth = rotationState.azimuth;
+                    rotationState.lastSentElevation = rotationState.elevation;
+                    rotationState.lastUpdateTime = now;
+                }
+            }
+        } else if (!rotationState.isDragging) {
+            rotationState.velocityX = 0;
+            rotationState.velocityY = 0;
+        }
+
+        rotationState.lastFrameTime = now;
+        requestAnimationFrame(updateFrame);
+    }
+
+    viewer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        rotationState.isDragging = true;
+        rotationState.velocityX = 0;
+        rotationState.velocityY = 0;
+        img.classList.add('grabbing');
+    });
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', () => {
+        if (rotationState.isDragging) {
+            rotationState.isDragging = false;
+            img.classList.remove('grabbing');
+            if (ws && ws.readyState === WebSocket.OPEN)
+                sendRotate(rotationState.azimuth, rotationState.elevation, true);
+        }
+    });
+    document.addEventListener('mouseleave', () => {
+        if (rotationState.isDragging) {
+            rotationState.isDragging = false;
+            img.classList.remove('grabbing');
+            rotationState.velocityX = 0;
+            rotationState.velocityY = 0;
+        }
+    });
+
+    async function loadModels() {
+        try {
+            const res = await fetch('/files');
+            if (!res.ok) throw new Error('Список моделей недоступен');
+            const models = await res.json();
+            const listEl = document.getElementById('modelList');
+            const noModels = document.getElementById('noModels');
+
+            if (models.length === 0) {
+                noModels.textContent = 'Нет моделей';
+                setModelSelectionEnabled(true);
+                return;
+            }
+
+            noModels.style.display = 'none';
+            listEl.innerHTML = '<h3>Модели</h3>';
+            models.forEach(m => {
+                if (!m.s3ObjectKey) return;
+                const div = document.createElement('div');
+                div.className = 'model-item';
+                div.textContent = m.fileName || m.s3ObjectKey || 'Модель';
+                div.dataset.modelId = m.s3ObjectKey;
+                div.onclick = () => {
+                    document.querySelectorAll('.model-item').forEach(el => el.classList.remove('active'));
+                    div.classList.add('active');
+                    currentModelId = m.s3ObjectKey;
+                    connectWebSocket(m.s3ObjectKey);
+                };
+                listEl.appendChild(div);
+            });
+
+            const first = document.querySelector('.model-item');
+            if (first) {
+                first.classList.add('active');
+                currentModelId = models[0].s3ObjectKey;
+                connectWebSocket(models[0].s3ObjectKey);
+            }
+        } catch (e) {
+            showError('Ошибка загрузки списка: ' + e.message);
+            setModelSelectionEnabled(true);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadModels();
+        requestAnimationFrame(updateFrame);
+    });
+
+    window.addEventListener('beforeunload', () => {
+        if (ws) ws.close();
+    });
+</script>
+</body>
+</html>
