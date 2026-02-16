@@ -1,12 +1,15 @@
 package beckand.test.config;
 
+import io.minio.BucketExistsArgs;
+import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.stereotype.Component;
 
 @Configuration
+@Slf4j
 public class MinioConfig {
 
     @Value("${minio.bucket}")
@@ -23,9 +26,22 @@ public class MinioConfig {
 
     @Bean
     public MinioClient minioClient() {
-        return MinioClient.builder()
+        MinioClient client = MinioClient.builder()
                 .endpoint(endpoint)
                 .credentials(accessKey, secretKey)
                 .build();
+        ensureBucket(client);
+        return client;
+    }
+
+    private void ensureBucket(MinioClient client) {
+        try {
+            if (!client.bucketExists(BucketExistsArgs.builder().bucket(bucket).build())) {
+                client.makeBucket(MakeBucketArgs.builder().bucket(bucket).build());
+                log.info("MinIO bucket created: {}", bucket);
+            }
+        } catch (Exception e) {
+            log.warn("Could not ensure MinIO bucket '{}': {}", bucket, e.getMessage());
+        }
     }
 }

@@ -133,6 +133,10 @@ public class FileService {
                 log.warn("MinIO unavailable, returning empty file list: {}", e.getMessage());
                 return new ArrayList<>();
             }
+            if (e.getMessage() != null && e.getMessage().contains("does not exist")) {
+                log.warn("MinIO bucket missing, returning empty file list. Restart the app to auto-create bucket.");
+                return new ArrayList<>();
+            }
             throw new RuntimeException("Failed to list files: " + e.getMessage(), e);
         }
     }
