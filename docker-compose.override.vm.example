@@ -1,0 +1,6 @@
+
+services:
+  app:
+    environment:
+      MINIO_ENDPOINT: http://10.3.24.120:9000
+      SPRING_DATASOURCE_URL: jdbc:postgresql://10.3.24.120:5432/atlas
