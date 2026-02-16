@@ -235,7 +235,8 @@ public class RenderService {
             long start = System.currentTimeMillis();
             while (!isInitialized && System.currentTimeMillis() - start < 5000) Thread.sleep(100);
             if (!isInitialized) throw new RuntimeException("Failed to initialize OpenGL context");
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // Catch Error too (e.g. UnsatisfiedLinkError when X11/GL libs missing in Docker)
             log.warn("OpenGL init failed, using stub: {}", e.toString());
             stubMode = true;
         }
