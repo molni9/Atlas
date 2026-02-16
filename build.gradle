@@ -84,6 +84,10 @@ dependencies {
     implementation "org.lwjgl:lwjgl-egl:${lwjglVersion}"
 }
 
+bootRun {
+    jvmArgs = ['-Djava.awt.headless=true']
+}
+
 tasks.named('test') {
     useJUnitPlatform()
 }

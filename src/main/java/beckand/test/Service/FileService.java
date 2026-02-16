@@ -12,12 +12,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
+import java.net.ConnectException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+import lombok.extern.slf4j.Slf4j;
+
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class FileService {
 
     private final MinioClient minioClient;
@@ -125,8 +129,20 @@ public class FileService {
 
             return files;
         } catch (Exception e) {
+            if (isConnectionError(e)) {
+                log.warn("MinIO unavailable, returning empty file list: {}", e.getMessage());
+                return new ArrayList<>();
+            }
             throw new RuntimeException("Failed to list files: " + e.getMessage(), e);
         }
+    }
+
+    private static boolean isConnectionError(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof ConnectException) return true;
+            if (t.getMessage() != null && t.getMessage().contains("Connection refused")) return true;
+        }
+        return false;
     }
 
     public InputStream getFileContent(String objectKey) {
