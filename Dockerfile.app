@@ -9,11 +9,7 @@ FROM eclipse-temurin:21-jre
 WORKDIR /app
 
 # Xvfb и библиотеки для JOGL (X11 + Mesa GL)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    xvfb \
-    libx11-6 libxext6 libxrandr2 libxrender1 \
-    libgl1-mesa-glx libglu1-mesa \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb libx11-6 libxext6 libxrandr2 libxrender1 libgl1 libglu1-mesa && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/build/libs/*.jar app.jar
 COPY docker-entrypoint.sh /docker-entrypoint.sh
