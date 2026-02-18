@@ -26,6 +26,7 @@ public class FileService {
 
     private final MinioClient minioClient;
     private final FileAttributesRepository fileAttributesRepository;
+    private final ModelMediaService modelMediaService;
 
     @Value("${minio.bucket}")
     private String bucket;
@@ -60,6 +61,7 @@ public class FileService {
 
     public void deleteFile(String objectKey) {
         try {
+            modelMediaService.deleteAllMediaForModel(objectKey);
             minioClient.removeObject(
                     RemoveObjectArgs.builder()
                     .bucket(bucket)

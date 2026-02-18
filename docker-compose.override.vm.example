@@ -1,6 +1,10 @@
-
+# На виртуалке: общий MinIO/БД + снижение нагрузки на CPU (рендер на CPU, без GPU)
 services:
   app:
     environment:
       MINIO_ENDPOINT: http://10.3.24.120:9000
       SPRING_DATASOURCE_URL: jdbc:postgresql://10.3.24.120:5432/atlas
+      # Меньше разрешение и FPS = меньше лагов (рендер идёт на CPU, не на видеокарту)
+      RENDER_WIDTH: 1280
+      RENDER_HEIGHT: 720
+      RENDER_STREAM_FPS: 15
