@@ -24,15 +24,11 @@ RUN apt-get update && apt-get install -y \
     xvfb \
     && rm -rf /var/lib/apt/lists/*
 
-# Создание пользователя
-RUN useradd -ms /bin/bash spring-user
-USER spring-user
-
 # Копирование слоев приложения
 COPY --from=layers /application/dependencies/ ./
 COPY --from=layers /application/spring-boot-loader/ ./
 COPY --from=layers /application/snapshot-dependencies/ ./
 COPY --from=layers /application/application/ ./
 
-# Запуск приложения под виртуальным X-сервером (headless рендер вместо заглушки)
-ENTRYPOINT ["bash", "-c", "xvfb-run -s '-screen 0 1280x720x24' java org.springframework.boot.loader.launch.JarLauncher"]
+# Запуск: сначала Xvfb в фоне, затем приложение (без spring-user — иначе Xvfb не стартует)
+ENTRYPOINT ["bash", "-c", "Xvfb :99 -screen 0 1280x720x24 & sleep 2 && export DISPLAY=:99 && exec java org.springframework.boot.loader.launch.JarLauncher"]
