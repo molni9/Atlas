@@ -11,8 +11,7 @@ RUN java -Djarmode=layertools -jar app.jar extract
 FROM bellsoft/liberica-openjre-debian:21
 VOLUME /tmp
 
-# Установка необходимых OpenGL и X11 библиотек
-# Добавлены libnvidia-gl для поддержки GPU NVIDIA
+# Установка необходимых OpenGL и X11 библиотек (libnvidia-gl-390 УДАЛЕН)
 RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libgl1-mesa-dri \
@@ -22,7 +21,6 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     libxtst6 \
     libxi6 \
-    libnvidia-gl-390 \
     && rm -rf /var/lib/apt/lists/*
 
 # Создание пользователя
@@ -40,5 +38,5 @@ COPY --from=layers /application/spring-boot-loader/ ./
 COPY --from=layers /application/snapshot-dependencies/ ./
 COPY --from=layers /application/application/ ./
 
-# Запуск приложения (Xvfb больше не нужен!)
+# Запуск приложения
 ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
