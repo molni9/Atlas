@@ -11,7 +11,7 @@ RUN java -Djarmode=layertools -jar app.jar extract
 FROM bellsoft/liberica-openjre-debian:21
 VOLUME /tmp
 
-# Установка необходимых OpenGL и X11 библиотек (libnvidia-gl-390 УДАЛЕН)
+# Установка необходимых OpenGL и X11 библиотек + виртуальный дисплей Xvfb
 RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libgl1-mesa-dri \
@@ -21,16 +21,12 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     libxtst6 \
     libxi6 \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # Создание пользователя
 RUN useradd -ms /bin/bash spring-user
 USER spring-user
-
-# Настройка переменных окружения для GPU
-ENV DISPLAY=:0
-ENV LIBGL_DEBUG=verbose
-ENV __GL_SYNC_TO_VBLANK=0
 
 # Копирование слоев приложения
 COPY --from=layers /application/dependencies/ ./
@@ -38,5 +34,5 @@ COPY --from=layers /application/spring-boot-loader/ ./
 COPY --from=layers /application/snapshot-dependencies/ ./
 COPY --from=layers /application/application/ ./
 
-# Запуск приложения
-ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
+# Запуск приложения под виртуальным X-сервером (headless рендер вместо заглушки)
+ENTRYPOINT ["bash", "-c", "xvfb-run -s '-screen 0 1280x720x24' java org.springframework.boot.loader.launch.JarLauncher"]
