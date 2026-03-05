@@ -12,6 +12,7 @@ FROM bellsoft/liberica-openjre-debian:21
 VOLUME /tmp
 
 # Установка необходимых OpenGL и X11 библиотек
+# Добавлены libnvidia-gl для поддержки GPU NVIDIA
 RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libgl1-mesa-dri \
@@ -21,18 +22,23 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     libxtst6 \
     libxi6 \
-    xvfb \
+    libnvidia-gl-390 \
     && rm -rf /var/lib/apt/lists/*
 
-# Создание пользователя и настройка переменных окружения
+# Создание пользователя
 RUN useradd -ms /bin/bash spring-user
 USER spring-user
-ENV DISPLAY=:99
 
+# Настройка переменных окружения для GPU
+ENV DISPLAY=:0
+ENV LIBGL_DEBUG=verbose
+ENV __GL_SYNC_TO_VBLANK=0
+
+# Копирование слоев приложения
 COPY --from=layers /application/dependencies/ ./
 COPY --from=layers /application/spring-boot-loader/ ./
 COPY --from=layers /application/snapshot-dependencies/ ./
 COPY --from=layers /application/application/ ./
 
-# Запуск Xvfb и приложения
-ENTRYPOINT ["sh", "-c", "Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 & sleep 3 && java org.springframework.boot.loader.launch.JarLauncher"]
+# Запуск приложения (Xvfb больше не нужен!)
+ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
