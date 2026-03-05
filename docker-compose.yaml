@@ -3,7 +3,7 @@ services:
     image: atlas-app:latest
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.gpu
     deploy:
       resources:
         reservations:
