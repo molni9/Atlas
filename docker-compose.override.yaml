@@ -1,0 +1,13 @@
+# Override для виртуалки/сервера:
+# - используем общий (удалённый) MinIO и PostgreSQL, чтобы видеть существующие модели
+# - не занижаем качество рендера принудительно (GPU/производительность настраивается в основном compose/env)
+services:
+  app:
+    environment:
+      MINIO_ENDPOINT: http://10.3.24.120:9000
+      SPRING_DATASOURCE_URL: jdbc:postgresql://10.3.24.120:5432/atlas
+
+      # Если нужно вручную снизить нагрузку — раскомментируй:
+      # RENDER_WIDTH: 1280
+      # RENDER_HEIGHT: 720
+      # RENDER_STREAM_FPS: 15
