@@ -31,8 +31,7 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+
     ports:
       - "8010:8010"
 
