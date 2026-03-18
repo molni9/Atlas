@@ -29,6 +29,7 @@ import java.nio.ByteOrder;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
@@ -65,6 +66,8 @@ public class RenderService {
     private String currentModelId = null;
     private float centerX = 0, centerY = 0, centerZ = 0;
     private volatile int highQualityFrames = 0;
+    private volatile long framesRendered = 0;
+    private volatile boolean glInfoLogged = false;
 
     @Autowired(required = false)
     private MinioClient minioClient;
@@ -105,6 +108,7 @@ public class RenderService {
                 public void init(GLAutoDrawable d) {
                     GL gl = d.getGL();
                     if (!(gl instanceof GL2 gl2)) throw new RuntimeException("GL2 is not available");
+                    logGlInfoOnce(gl2);
                     gl2.glClearColor(0.06f, 0.06f, 0.08f, 1.0f);
                     gl2.glEnable(GL2.GL_DEPTH_TEST);
                     gl2.glEnable(GL2.GL_LIGHTING);
@@ -139,10 +143,12 @@ public class RenderService {
                     if (!isInitialized) return;
                     GL gl = d.getGL();
                     if (!(gl instanceof GL2 gl2)) return;
+                    if (!glInfoLogged) logGlInfoOnce(gl2);
                     if (Math.abs(currentAzimuth - targetAzimuth) > 0.01f || Math.abs(currentElevation - targetElevation) > 0.01f)
                         needsRender = true;
                     if (!needsRender) return;
 
+                    long t0 = System.nanoTime();
                     gl2.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT);
                     float delta = 0.2f;
                     currentAzimuth += (targetAzimuth - currentAzimuth) * delta;
@@ -215,6 +221,14 @@ public class RenderService {
                     gl2.glReadPixels(0, 0, renderWidth, renderHeight, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, pixelBuffer);
                     pixelBuffer.rewind();
                     needsRender = false;
+                    framesRendered++;
+                    if (framesRendered == 1 || framesRendered % 120 == 0) {
+                        long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+                        log.debug("Render frame done: {}x{} ms={} az={} el={} faces={} verts={}",
+                                renderWidth, renderHeight, ms, currentAzimuth, currentElevation,
+                                currentModel != null ? currentModel.getNumFaces() : 0,
+                                currentModel != null ? currentModel.getNumVertices() : 0);
+                    }
                     synchronized (renderLock) {
                         renderComplete = true;
                         renderLock.notifyAll();
@@ -239,6 +253,28 @@ public class RenderService {
             // Catch Error too (e.g. UnsatisfiedLinkError when X11/GL libs missing in Docker)
             log.warn("OpenGL init failed, using stub: {}", e.toString());
             stubMode = true;
+        }
+    }
+
+    private void logGlInfoOnce(GL2 gl2) {
+        if (glInfoLogged) return;
+        glInfoLogged = true;
+        String vendor = safeGlString(gl2, GL2.GL_VENDOR);
+        String renderer = safeGlString(gl2, GL2.GL_RENDERER);
+        String version = safeGlString(gl2, GL2.GL_VERSION);
+        String sl = safeGlString(gl2, GL2.GL_SHADING_LANGUAGE_VERSION);
+        String exts = safeGlString(gl2, GL2.GL_EXTENSIONS);
+        String extSample = exts != null && exts.length() > 180 ? exts.substring(0, 180) + "..." : exts;
+        log.info("OpenGL context initialized. vendor='{}' renderer='{}' version='{}' glsl='{}' hwAccelRequested={} sampleBuffers={} samples={}",
+                vendor, renderer, version, sl, true, true, 8);
+        log.debug("OpenGL extensions sample: {}", extSample);
+    }
+
+    private String safeGlString(GL2 gl2, int what) {
+        try {
+            return gl2.glGetString(what);
+        } catch (Throwable t) {
+            return null;
         }
     }
 
@@ -367,26 +403,35 @@ public class RenderService {
 
     public byte[] renderModelAdaptive(String objectKey, InputStream modelStream, String fileType, double azimuth, double elevation, boolean finalFrame) throws IOException {
         if (stubMode || !isInitialized) return renderStubJpeg(objectKey, azimuth, elevation);
+        long tAll0 = System.nanoTime();
         ensurePixelBufferCapacity();
         int qAz = quantizeAngle(azimuth);
         int qEl = quantizeAngle(elevation);
         if (finalFrame) {
             String key = objectKey + ":" + qAz + ":" + qEl + ":" + renderWidth + "x" + renderHeight;
             byte[] cached = renderCache.get(key);
-            if (cached != null) return cached;
+            if (cached != null) {
+                log.debug("Render cache hit: key={} bytes={}", key, cached.length);
+                return cached;
+            }
         }
 
         if (!objectKey.equals(currentModelId)) {
+            long t0 = System.nanoTime();
             currentModel = ObjReader.read(modelStream);
             if (currentModel.getNumFaces() == 0 || currentModel.getNumVertices() == 0)
                 throw new IOException("Модель не содержит вершин или граней");
             currentModelId = objectKey;
             updateModelBounds();
+            log.info("Model loaded: id={} faces={} verts={} loadMs={}",
+                    objectKey, currentModel.getNumFaces(), currentModel.getNumVertices(),
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0));
         }
 
         targetAzimuth = qAz;
         targetElevation = qEl;
         needsRender = true;
+        long tWait0 = System.nanoTime();
         synchronized (renderLock) {
             renderComplete = false;
             while (!renderComplete) {
@@ -396,7 +441,9 @@ public class RenderService {
                 }
             }
         }
+        long waitMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tWait0);
 
+        long tCopy0 = System.nanoTime();
         BufferedImage full = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_RGB);
         int[] pixels = ((DataBufferInt) full.getRaster().getDataBuffer()).getData();
         for (int i = 0; i < renderHeight; i++) {
@@ -408,10 +455,12 @@ public class RenderService {
                 pixels[i * renderWidth + j] = (r << 16) | (g << 8) | b;
             }
         }
+        long copyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tCopy0);
 
         BufferedImage toEncode = full;
         float quality = finalFrame ? Math.max(0.85f, jpegQuality) : Math.min(0.7f, Math.max(0.4f, jpegQuality));
         if (!finalFrame) {
+            long tScale0 = System.nanoTime();
             int w = Math.max(1, renderWidth / 2);
             int h = Math.max(1, renderHeight / 2);
             BufferedImage scaled = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
@@ -420,8 +469,12 @@ public class RenderService {
             g2.drawImage(full, 0, 0, w, h, null);
             g2.dispose();
             toEncode = scaled;
+            log.debug("Frame scaled: {}x{} -> {}x{} scaleMs={}", renderWidth, renderHeight, w, h,
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tScale0));
         }
+        long tJpeg0 = System.nanoTime();
         byte[] out = encodeJpeg(toEncode, quality);
+        long jpegMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tJpeg0);
         if (finalFrame) {
             String key = objectKey + ":" + qAz + ":" + qEl + ":" + renderWidth + "x" + renderHeight;
             if (renderCache.size() >= maxCacheEntries) {
@@ -430,6 +483,9 @@ public class RenderService {
             }
             renderCache.put(key, out);
         }
+        long allMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tAll0);
+        log.debug("Render timings: id={} final={} waitMs={} copyMs={} jpegMs={} totalMs={} outBytes={} az={} el={}",
+                objectKey, finalFrame, waitMs, copyMs, jpegMs, allMs, out.length, qAz, qEl);
         return out;
     }
 

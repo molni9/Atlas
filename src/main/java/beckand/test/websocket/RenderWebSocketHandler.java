@@ -12,6 +12,7 @@ import org.springframework.web.socket.*;
 
 import java.io.InputStream;
 import java.net.URI;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
@@ -31,6 +32,7 @@ public class RenderWebSocketHandler implements WebSocketHandler {
     public void handleMessage(WebSocketSession session, WebSocketMessage<?> message) {
         try {
             if (message instanceof TextMessage textMessage) {
+                long tAll0 = System.nanoTime();
                 URI uri = session.getUri();
                 if (uri == null) return;
                 String path = uri.getPath();
@@ -45,10 +47,19 @@ public class RenderWebSocketHandler implements WebSocketHandler {
                 boolean finalFrame = root.path("final").asBoolean(false);
 
                 // Рендер только на сервере — отправляем клиенту только JPEG
+                long tMeta0 = System.nanoTime();
                 FileDTO info = fileService.getFileInfo(modelId);
+                long metaMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tMeta0);
                 try (InputStream is = fileService.getFileContent(modelId)) {
+                    long tRender0 = System.nanoTime();
                     byte[] jpeg = renderService.renderModelAdaptive(modelId, is, info.getFileType(), azimuth, elevation, finalFrame);
+                    long renderMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tRender0);
+                    long tSend0 = System.nanoTime();
                     session.sendMessage(new BinaryMessage(jpeg));
+                    long sendMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tSend0);
+                    long allMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tAll0);
+                    log.debug("WS rotate: session={} model={} final={} az={} el={} bytes={} metaMs={} renderMs={} sendMs={} totalMs={}",
+                            session.getId(), modelId, finalFrame, azimuth, elevation, jpeg.length, metaMs, renderMs, sendMs, allMs);
                 }
             }
         } catch (Exception e) {
