@@ -4,20 +4,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.gpu
-    # GPU (работает в обычном `docker compose`, не только в Swarm)
-    gpus: all
-    device_requests:
-      - driver: nvidia
-        count: 1
-        capabilities: [gpu, compute, utility, video]
-    # Для Swarm (в обычном `docker compose` этот блок часто игнорируется)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu, compute, utility, video]
+    # GPU (совместимо со старым docker-compose v1)
+    runtime: nvidia
     environment:
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: admin
@@ -34,6 +22,8 @@ services:
       # Дополнительные переменные для OpenGL на GPU
       DISPLAY: :0
       LIBGL_DEBUG: verbose
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
     depends_on:
       minio:
         condition: service_started
@@ -41,11 +31,6 @@ services:
         condition: service_healthy
     ports:
       - "8010:8010"
-    # Если вдруг понадобится старый способ, можно раскомментировать:
-    # runtime: nvidia
-    # environment:
-    #   NVIDIA_VISIBLE_DEVICES: all
-    #   NVIDIA_DRIVER_CAPABILITIES: all
 
   minio:
     container_name: minio
