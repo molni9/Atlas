@@ -99,9 +99,28 @@ public class RenderService {
             capabilities.setDepthBits(24);
             capabilities.setSampleBuffers(true);
             capabilities.setNumSamples(8);
+            capabilities.setOnscreen(false);
 
-            GLDrawableFactory factory = GLDrawableFactory.getFactory(profile);
-            drawable = factory.createOffscreenAutoDrawable(null, capabilities, null, renderWidth, renderHeight);
+            GLDrawableFactory factory = null;
+            try {
+                Class<?> eglClass = Class.forName("com.jogamp.opengl.egl.EGLDrawableFactory");
+                java.lang.reflect.Method getFactory = eglClass.getMethod("getEGLFactory");
+                factory = (GLDrawableFactory) getFactory.invoke(null);
+                if (factory != null) {
+                    Object device = factory.getClass().getMethod("getDefaultDevice").invoke(factory);
+                    Object chooser = Class.forName("com.jogamp.opengl.DefaultGLCapabilitiesChooser").getConstructor().newInstance();
+                    drawable = (GLAutoDrawable) factory.getClass()
+                            .getMethod("createOffscreenAutoDrawable", Object.class, GLCapabilities.class, Object.class, int.class, int.class)
+                            .invoke(factory, device, capabilities, chooser, renderWidth, renderHeight);
+                    log.info("Using EGL for headless GPU rendering");
+                }
+            } catch (Throwable e) {
+                log.debug("EGL not available, falling back to default offscreen: {}", e.getMessage());
+            }
+            if (drawable == null) {
+                factory = GLDrawableFactory.getFactory(profile);
+                drawable = factory.createOffscreenAutoDrawable(null, capabilities, null, renderWidth, renderHeight);
+            }
 
             drawable.addGLEventListener(new GLEventListener() {
                 @Override
