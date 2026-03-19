@@ -44,8 +44,9 @@ public class RenderService {
     private int angleStepDeg;
     @Value("${render.cache.max.entries:200}")
     private int maxCacheEntries;
+    @Value("${render.stream.fps:20}")
+    private int renderStreamFps;
 
-    private static final int FPS = 60;
     private static final int MAX_RENDER_SIZE = 2048;
 
     private final Map<String, byte[]> renderCache = new ConcurrentHashMap<>();
@@ -268,8 +269,10 @@ public class RenderService {
             });
 
             glu = new GLU();
-            animator = new FPSAnimator(drawable, FPS);
+            int fps = Math.max(1, Math.min(60, renderStreamFps));
+            animator = new FPSAnimator(drawable, fps);
             animator.start();
+            log.info("Render animator started at {} FPS ({}x{})", fps, renderWidth, renderHeight);
 
             long start = System.currentTimeMillis();
             while (!isInitialized && System.currentTimeMillis() - start < 5000) Thread.sleep(100);

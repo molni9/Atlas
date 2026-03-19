@@ -17,10 +17,10 @@ services:
       SPRING_DATASOURCE_USERNAME: user
       SPRING_DATASOURCE_PASSWORD: password
       SERVER_PORT: 8010
-      # GPU рендеринг - высокое качество
-      RENDER_WIDTH: 1920
-      RENDER_HEIGHT: 1080
-      RENDER_STREAM_FPS: 60
+      # Разрешение и FPS: при софт-рендере (Mesa) меньше = меньше лагов. Для GPU можно поднять.
+      RENDER_WIDTH: 1280
+      RENDER_HEIGHT: 720
+      RENDER_STREAM_FPS: 15
       # Дополнительные переменные для OpenGL на GPU
       DISPLAY: :0
       LIBGL_DEBUG: verbose
