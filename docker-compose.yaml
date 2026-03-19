@@ -24,6 +24,8 @@ services:
       # Дополнительные переменные для OpenGL на GPU
       DISPLAY: :0
       LIBGL_DEBUG: verbose
+      # Стабильный режим (без краша NVIDIA/GLX): рендер через Mesa/CPU
+      LIBGL_ALWAYS_SOFTWARE: "1"
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: all
     depends_on:
