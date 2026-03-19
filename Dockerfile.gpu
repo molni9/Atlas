@@ -29,5 +29,5 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
 
 EXPOSE 8010
-# Xvfb + GPU: без LIBGL_ALWAYS_SOFTWARE, рендер через NVIDIA. Если краш — в compose задать LIBGL_ALWAYS_SOFTWARE=1.
-ENTRYPOINT ["bash", "-c", "Xvfb :99 -screen 0 1920x1080x24 & sleep 2 && export DISPLAY=:99 && exec java -jar /application/app.jar"] 
+# Xvfb + принудительно NVIDIA для GLX (иначе подхватывается Mesa swrast). Если краш — в compose: LIBGL_ALWAYS_SOFTWARE=1.
+ENTRYPOINT ["bash", "-c", "Xvfb :99 -screen 0 1920x1080x24 & sleep 2 && export DISPLAY=:99 && export __GLX_VENDOR_LIBRARY_NAME=nvidia && exec java -jar /application/app.jar"] 
