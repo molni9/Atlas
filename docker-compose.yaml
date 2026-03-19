@@ -22,7 +22,6 @@ services:
       RENDER_HEIGHT: 720
       RENDER_STREAM_FPS: 15
       # Дополнительные переменные для OpenGL на GPU
-      DISPLAY: :0
       LIBGL_DEBUG: verbose
       # EGL headless: без Xvfb (для GPU)
       USE_XVFB: "0"
