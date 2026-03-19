@@ -9,11 +9,13 @@ FROM nvidia/opengl:1.2-glvnd-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /application
 
-# Java runtime + EGL для headless GPU (без X11/Xvfb — рендер через EGL на NVIDIA)
+# Java runtime + EGL для headless GPU; libharfbuzz/fontconfig для stub-режима (Java2D/fonts)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-21-jre-headless \
     libegl1 \
     libgles2 \
+    libharfbuzz0b \
+    fontconfig \
     ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
