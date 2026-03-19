@@ -90,6 +90,23 @@
             display: none;
             max-width: 360px;
         }
+        #perfOverlay {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            background: rgba(0, 0, 0, 0.75);
+            color: #b0e0b0;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-family: ui-monospace, monospace;
+            font-size: 13px;
+            line-height: 1.4;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #perfOverlay .good { color: #7eff7e; }
+        #perfOverlay .warn { color: #ffd54f; }
+        #perfOverlay .bad  { color: #ff8a80; }
     </style>
 </head>
 <body>
@@ -98,6 +115,11 @@
     <div id="noModels">Загрузка списка…</div>
 </div>
 <div id="viewer">
+    <div id="perfOverlay" style="display:none;">
+        <span id="perfFps">FPS: —</span><br>
+        <span id="perfFrameMs">Кадр: — ms</span><br>
+        <span id="perfJpeg">JPEG: — KB</span>
+    </div>
     <img id="modelImage" src="" alt="Рендер" draggable="false" style="display:none;">
 </div>
 <div id="loading">Загрузка…</div>
@@ -135,6 +157,36 @@
     let lastSuccessfulUpdate = 0;
     let pendingUpdate = false;
 
+    const perf = {
+        frameTimes: [],
+        maxSamples: 30,
+        lastTime: 0
+    };
+
+    function updatePerf(sizeBytes) {
+        const now = performance.now();
+        if (perf.lastTime > 0) {
+            perf.frameTimes.push(now - perf.lastTime);
+            if (perf.frameTimes.length > perf.maxSamples) perf.frameTimes.shift();
+        }
+        perf.lastTime = now;
+
+        const el = document.getElementById('perfOverlay');
+        const fpsEl = document.getElementById('perfFps');
+        const msEl = document.getElementById('perfFrameMs');
+        const jpegEl = document.getElementById('perfJpeg');
+        if (!el || perf.frameTimes.length === 0) return;
+
+        el.style.display = 'block';
+        const avgMs = perf.frameTimes.reduce((a, b) => a + b, 0) / perf.frameTimes.length;
+        const fps = avgMs > 0 ? Math.round(1000 / avgMs) : 0;
+        fpsEl.textContent = 'FPS: ' + fps;
+        fpsEl.className = fps >= 20 ? 'good' : (fps >= 10 ? 'warn' : 'bad');
+        msEl.textContent = 'Кадр: ' + Math.round(avgMs) + ' ms';
+        msEl.className = avgMs <= 50 ? 'good' : (avgMs <= 100 ? 'warn' : 'bad');
+        jpegEl.textContent = 'JPEG: ' + (sizeBytes ? Math.round(sizeBytes / 1024) + ' KB' : '—');
+    }
+
     function showError(msg) {
         const el = document.getElementById('errorMessage');
         el.textContent = msg;
@@ -165,6 +217,8 @@
         rotationState.velocityY = 0;
         lastSuccessfulUpdate = 0;
         pendingUpdate = false;
+        perf.frameTimes = [];
+        perf.lastTime = 0;
 
         const wsUrl = `ws://${window.location.host}/ws/render/${encodeURIComponent(modelId)}`;
         ws = new WebSocket(wsUrl);
@@ -178,6 +232,7 @@
 
         ws.onmessage = (event) => {
             if (event.data instanceof Blob) {
+                updatePerf(event.data.size);
                 const url = URL.createObjectURL(event.data);
                 if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
                 img.src = url;
