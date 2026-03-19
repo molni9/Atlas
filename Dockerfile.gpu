@@ -29,7 +29,7 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
 
 EXPOSE 8010
-# Не принуждаем NVIDIA GLX (на driver 390 это может крашить). Управление через env:
-# - LIBGL_ALWAYS_SOFTWARE=1  -> Mesa/CPU
-# - (без него)               -> попытка GPU, если стек выдержит
-ENTRYPOINT ["bash", "-c", "Xvfb :99 -screen 0 1920x1080x24 & sleep 2 && export DISPLAY=:99 && exec java -jar /application/app.jar"]
+# Переключатель:
+# - USE_XVFB=1 (default)  -> Xvfb (GLX), можно форсить CPU через LIBGL_ALWAYS_SOFTWARE=1
+# - USE_XVFB=0            -> без DISPLAY (для EGL headless)
+ENTRYPOINT ["bash", "-c", "if [ \"${USE_XVFB:-1}\" = \"1\" ]; then Xvfb :99 -screen 0 1920x1080x24 & sleep 2 && export DISPLAY=:99; else unset DISPLAY; fi; exec java -jar /application/app.jar"]

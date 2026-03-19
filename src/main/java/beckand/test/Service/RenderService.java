@@ -19,6 +19,7 @@ import javax.imageio.ImageIO;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
 import javax.imageio.stream.MemoryCacheImageOutputStream;
+import com.jogamp.nativewindow.AbstractGraphicsDevice;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.io.ByteArrayOutputStream;
@@ -104,15 +105,21 @@ public class RenderService {
 
             GLDrawableFactory factory = null;
             try {
-                Class<?> eglClass = Class.forName("com.jogamp.opengl.egl.EGLDrawableFactory");
+                // JOGL 2.4 EGL factory is often in internal package `jogamp.opengl.egl.*`
+                // Try both names to avoid hard dependency on internal API.
+                Class<?> eglClass;
+                try {
+                    eglClass = Class.forName("com.jogamp.opengl.egl.EGLDrawableFactory");
+                } catch (ClassNotFoundException ignored) {
+                    eglClass = Class.forName("jogamp.opengl.egl.EGLDrawableFactory");
+                }
+
                 java.lang.reflect.Method getFactory = eglClass.getMethod("getEGLFactory");
                 factory = (GLDrawableFactory) getFactory.invoke(null);
                 if (factory != null) {
-                    Object device = factory.getClass().getMethod("getDefaultDevice").invoke(factory);
-                    Object chooser = Class.forName("com.jogamp.opengl.DefaultGLCapabilitiesChooser").getConstructor().newInstance();
-                    drawable = (GLAutoDrawable) factory.getClass()
-                            .getMethod("createOffscreenAutoDrawable", Object.class, GLCapabilities.class, Object.class, int.class, int.class)
-                            .invoke(factory, device, capabilities, chooser, renderWidth, renderHeight);
+                    AbstractGraphicsDevice device = factory.getDefaultDevice();
+                    DefaultGLCapabilitiesChooser chooser = new DefaultGLCapabilitiesChooser();
+                    drawable = factory.createOffscreenAutoDrawable(device, capabilities, chooser, renderWidth, renderHeight);
                     log.info("Using EGL for headless GPU rendering");
                 }
             } catch (Throwable e) {
