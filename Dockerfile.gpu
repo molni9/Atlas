@@ -9,13 +9,15 @@ FROM nvidia/opengl:1.2-glvnd-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /application
 
-# Java runtime + EGL для headless GPU; libharfbuzz/fontconfig для stub-режима (Java2D/fonts)
+# Java runtime + EGL; Xvfb для fallback (GLX); libharfbuzz/fontconfig для stub
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-21-jre-headless \
     libegl1 \
     libgles2 \
     libharfbuzz0b \
     fontconfig \
+    xvfb \
+    libx11-6 libxext6 libxrender1 \
     ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
@@ -27,5 +29,6 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
 
 EXPOSE 8010
-# Без DISPLAY — JOGL использует EGL (headless), рендер идёт на GPU
-ENTRYPOINT ["bash", "-c", "unset DISPLAY && exec java -jar /application/app.jar"] 
+# Сначала пробуем без DISPLAY (EGL). Если EGL не поднялся — при следующем запуске можно использовать Xvfb:
+# Xvfb :99 -screen 0 1920x1080x24 & sleep 2 && export DISPLAY=:99 __GLX_VENDOR_LIBRARY_NAME=nvidia && exec java -jar /application/app.jar
+ENTRYPOINT ["bash", "-c", "Xvfb :99 -screen 0 1920x1080x24 & sleep 2 && export DISPLAY=:99 && export __GLX_VENDOR_LIBRARY_NAME=nvidia 2>/dev/null; exec java -jar /application/app.jar"] 

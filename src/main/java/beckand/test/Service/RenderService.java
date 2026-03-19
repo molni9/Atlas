@@ -115,11 +115,17 @@ public class RenderService {
                     log.info("Using EGL for headless GPU rendering");
                 }
             } catch (Throwable e) {
-                log.debug("EGL not available, falling back to default offscreen: {}", e.getMessage());
+                log.warn("EGL not available, falling back to default offscreen: {} - {}", e.getClass().getSimpleName(), e.getMessage());
+                if (log.isDebugEnabled()) log.debug("EGL init failure", e);
             }
             if (drawable == null) {
                 factory = GLDrawableFactory.getFactory(profile);
-                drawable = factory.createOffscreenAutoDrawable(null, capabilities, null, renderWidth, renderHeight);
+                try {
+                    drawable = factory.createOffscreenAutoDrawable(null, capabilities, null, renderWidth, renderHeight);
+                } catch (Throwable e) {
+                    log.warn("Default offscreen factory failed (no DISPLAY?): {} - {}", e.getClass().getSimpleName(), e.getMessage());
+                    throw e;
+                }
             }
 
             drawable.addGLEventListener(new GLEventListener() {
