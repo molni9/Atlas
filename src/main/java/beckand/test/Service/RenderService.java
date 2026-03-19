@@ -84,6 +84,11 @@ public class RenderService {
         try {
             System.setProperty("java.awt.headless", "true");
             GLProfile.initSingleton();
+            boolean useXvfb = !"0".equals(System.getenv("USE_XVFB"));
+            log.info("Render init: USE_XVFB={} DISPLAY='{}' __EGL_VENDOR_LIBRARY_FILENAMES='{}'",
+                    useXvfb ? "1" : "0",
+                    System.getenv("DISPLAY"),
+                    System.getenv("__EGL_VENDOR_LIBRARY_FILENAMES"));
 
             int width = Math.max(1, Math.min(MAX_RENDER_SIZE, renderWidth > 0 ? renderWidth : 1280));
             int height = Math.max(1, Math.min(MAX_RENDER_SIZE, renderHeight > 0 ? renderHeight : 720));
@@ -105,6 +110,7 @@ public class RenderService {
 
             GLDrawableFactory factory = null;
             try {
+                log.info("Attempting EGL offscreen context...");
                 // JOGL 2.4 EGL factory is often in internal package `jogamp.opengl.egl.*`
                 // Try both names to avoid hard dependency on internal API.
                 Class<?> eglClass;
@@ -127,6 +133,10 @@ public class RenderService {
                 if (log.isDebugEnabled()) log.debug("EGL init failure", e);
             }
             if (drawable == null) {
+                // In headless EGL mode we must not attempt X11/GLX factory.
+                if ("0".equals(System.getenv("USE_XVFB"))) {
+                    throw new RuntimeException("EGL init failed and USE_XVFB=0, refusing X11/GLX fallback");
+                }
                 factory = GLDrawableFactory.getFactory(profile);
                 try {
                     drawable = factory.createOffscreenAutoDrawable(null, capabilities, null, renderWidth, renderHeight);
