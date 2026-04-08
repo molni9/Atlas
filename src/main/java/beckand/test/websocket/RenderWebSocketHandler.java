@@ -1,8 +1,8 @@
 package beckand.test.websocket;
 
-import beckand.test.DTO.FileDTO;
-import beckand.test.Service.FileService;
-import beckand.test.Service.RenderService;
+import beckand.test.DTO.file.FileDTO;
+import beckand.test.Service.file.FileService;
+import beckand.test.Service.render.RenderService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;

@@ -1,4 +1,4 @@
-package beckand.test.DTO;
+package beckand.test.DTO.file;
 
 import lombok.Data;
 
@@ -6,4 +6,7 @@ import lombok.Data;
 public class FileDTO {
     private String fileType;
     private String s3ObjectKey;
+    private String fileName;
+    private Long size;
 }
+

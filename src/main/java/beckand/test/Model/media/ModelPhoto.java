@@ -1,12 +1,12 @@
-package beckand.test.Model;
+package beckand.test.Model.media;
 
 import jakarta.persistence.*;
 import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "model_video")
-public class ModelVideo {
+@Table(name = "model_photo")
+public class ModelPhoto {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
@@ -17,3 +17,4 @@ public class ModelVideo {
     @Column(name = "display_order")
     private Integer displayOrder = 0;
 }
+

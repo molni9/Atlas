@@ -3,7 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Viewer — серверный рендер</title>
+    <title>Atlas — серверный 3D-рендер</title>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
     <style>
         body {
             margin: 0;
@@ -18,17 +26,36 @@
             background: rgba(30, 30, 50, 0.95);
             padding: 20px;
             border-radius: 12px;
-            width: 280px;
+            width: 300px;
             max-height: 80vh;
             overflow-y: auto;
             box-shadow: 0 4px 24px rgba(0,0,0,0.3);
             border: 1px solid rgba(255,255,255,0.08);
         }
         #modelList h3 {
-            margin: 0 0 16px 0;
+            margin: 0 0 12px 0;
             padding-bottom: 10px;
             border-bottom: 1px solid rgba(255,255,255,0.1);
             font-weight: 600;
+        }
+        .mode-switch {
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        .mode-switch label {
+            display: block;
+            cursor: pointer;
+            margin: 6px 0;
+        }
+        .mode-switch input { margin-right: 8px; }
+        .mode-hint {
+            margin: 0 0 10px 0;
+            font-size: 12px;
+            line-height: 1.45;
+            color: rgba(255,255,255,0.72);
         }
         .model-item {
             padding: 12px 14px;
@@ -44,20 +71,25 @@
             background: rgba(100, 150, 255, 0.2);
             color: #7eb8ff;
         }
+        .model-item.dim {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
         #viewer {
             position: absolute;
-            left: 320px;
+            left: 340px;
             top: 40px;
             right: 40px;
             bottom: 40px;
             background: #0f0f1a;
             border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            overflow: hidden;
             box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
         }
         #modelImage {
+            position: absolute;
+            left: 0;
+            top: 0;
             width: 100%;
             height: 100%;
             object-fit: contain;
@@ -65,8 +97,19 @@
             user-select: none;
             cursor: grab;
             image-rendering: auto;
+            z-index: 1;
         }
         #modelImage.grabbing { cursor: grabbing; }
+        #glCanvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            display: block;
+            z-index: 3;
+            outline: none;
+        }
         #loading {
             position: fixed;
             top: 50%;
@@ -78,6 +121,7 @@
             border-radius: 10px;
             display: none;
             font-size: 15px;
+            z-index: 100;
         }
         #errorMessage {
             position: fixed;
@@ -89,6 +133,7 @@
             border-radius: 10px;
             display: none;
             max-width: 360px;
+            z-index: 100;
         }
         #perfOverlay {
             position: absolute;
@@ -102,7 +147,7 @@
             font-size: 13px;
             line-height: 1.4;
             pointer-events: none;
-            z-index: 10;
+            z-index: 4;
         }
         #perfOverlay .good { color: #7eff7e; }
         #perfOverlay .warn { color: #ffd54f; }
@@ -112,23 +157,36 @@
 <body>
 <div id="modelList">
     <h3>Модели</h3>
+    <div class="mode-switch">
+        <p class="mode-hint">Основной режим Atlas: крутится и считается на <strong>сервере</strong>, в браузер идут только кадры (JPEG).</p>
+        <label><input type="radio" name="viewMode" value="server" checked> Серверный рендер (WebSocket, GPU сервера)</label>
+        <label><input type="radio" name="viewMode" value="webgl"> Локально в браузере (WebGL) — только для проверки без сервера</label>
+    </div>
     <div id="noModels">Загрузка списка…</div>
+    <div id="modelItems"></div>
 </div>
 <div id="viewer">
     <div id="perfOverlay" style="display:none;">
         <span id="perfFps">FPS: —</span><br>
         <span id="perfFrameMs">Кадр: — ms</span><br>
-        <span id="perfJpeg">JPEG: — KB</span>
+        <span id="perfExtra">—</span>
     </div>
+    <canvas id="glCanvas" tabindex="-1" style="display:none;"></canvas>
     <img id="modelImage" src="" alt="Рендер" draggable="false" style="display:none;">
 </div>
 <div id="loading">Загрузка…</div>
 <div id="errorMessage"></div>
 
-<script>
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+
     const img = document.getElementById('modelImage');
     const viewer = document.getElementById('viewer');
+    const glCanvas = document.getElementById('glCanvas');
 
+    let viewMode = 'server';
     let ws = null;
     let currentModelId = null;
     let reconnectAttempts = 0;
@@ -163,7 +221,40 @@
         lastTime: 0
     };
 
-    function updatePerf(sizeBytes) {
+    let three = {
+        renderer: null,
+        scene: null,
+        camera: null,
+        controls: null,
+        root: null,
+        raf: 0,
+        resizeObserver: null
+    };
+
+    function isObjKey(name) {
+        return name && name.toLowerCase().endsWith('.obj');
+    }
+
+    function showError(msg) {
+        const el = document.getElementById('errorMessage');
+        el.textContent = msg;
+        el.style.display = 'block';
+        setTimeout(() => { el.style.display = 'none'; }, 6000);
+    }
+
+    function setLoading(loading) {
+        document.getElementById('loading').style.display = loading ? 'block' : 'none';
+    }
+
+    function setModelSelectionEnabled(enabled) {
+        document.querySelectorAll('.model-item').forEach(el => {
+            if (el.classList.contains('dim')) return;
+            el.style.pointerEvents = enabled ? 'auto' : 'none';
+            el.style.opacity = enabled ? '1' : '0.5';
+        });
+    }
+
+    function updatePerfServer(sizeBytes) {
         const now = performance.now();
         if (perf.lastTime > 0) {
             perf.frameTimes.push(now - perf.lastTime);
@@ -174,7 +265,7 @@
         const el = document.getElementById('perfOverlay');
         const fpsEl = document.getElementById('perfFps');
         const msEl = document.getElementById('perfFrameMs');
-        const jpegEl = document.getElementById('perfJpeg');
+        const extraEl = document.getElementById('perfExtra');
         if (!el || perf.frameTimes.length === 0) return;
 
         el.style.display = 'block';
@@ -184,28 +275,218 @@
         fpsEl.className = fps >= 20 ? 'good' : (fps >= 10 ? 'warn' : 'bad');
         msEl.textContent = 'Кадр: ' + Math.round(avgMs) + ' ms';
         msEl.className = avgMs <= 50 ? 'good' : (avgMs <= 100 ? 'warn' : 'bad');
-        jpegEl.textContent = 'JPEG: ' + (sizeBytes ? Math.round(sizeBytes / 1024) + ' KB' : '—');
+        extraEl.textContent = 'JPEG: ' + (sizeBytes ? Math.round(sizeBytes / 1024) + ' KB' : '—');
     }
 
-    function showError(msg) {
-        const el = document.getElementById('errorMessage');
-        el.textContent = msg;
+    function updatePerfWebgl(fps, frameMs) {
+        const el = document.getElementById('perfOverlay');
+        const fpsEl = document.getElementById('perfFps');
+        const msEl = document.getElementById('perfFrameMs');
+        const extraEl = document.getElementById('perfExtra');
         el.style.display = 'block';
-        setTimeout(() => { el.style.display = 'none'; }, 5000);
+        fpsEl.textContent = 'FPS: ' + fps;
+        fpsEl.className = fps >= 45 ? 'good' : (fps >= 30 ? 'warn' : 'bad');
+        msEl.textContent = 'Кадр: ' + Math.round(frameMs) + ' ms';
+        msEl.className = frameMs <= 22 ? 'good' : (frameMs <= 40 ? 'warn' : 'bad');
+        extraEl.textContent = 'WebGL (клиент)';
     }
 
-    function setLoading(loading) {
-        document.getElementById('loading').style.display = loading ? 'block' : 'none';
+    function disposeThreeContent() {
+        if (three.root) {
+            three.root.traverse((o) => {
+                if (o.geometry) o.geometry.dispose();
+                if (o.material) {
+                    const m = o.material;
+                    if (Array.isArray(m)) m.forEach(x => x.dispose && x.dispose());
+                    else if (m.dispose) m.dispose();
+                }
+            });
+            three.scene.remove(three.root);
+            three.root = null;
+        }
     }
 
-    function setModelSelectionEnabled(enabled) {
-        document.querySelectorAll('.model-item').forEach(el => {
-            el.style.pointerEvents = enabled ? 'auto' : 'none';
-            el.style.opacity = enabled ? '1' : '0.5';
+    function initThreeIfNeeded() {
+        if (three.renderer) return;
+        const w = viewer.clientWidth || 800;
+        const h = viewer.clientHeight || 600;
+        three.scene = new THREE.Scene();
+        three.scene.background = new THREE.Color(0x0f0f1a);
+
+        three.camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 5000);
+        three.camera.position.set(0, 0, 5);
+
+        three.renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true, alpha: false });
+        three.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        three.renderer.setSize(w, h);
+
+        three.scene.add(new THREE.HemisphereLight(0xffffff, 0x333344, 1));
+        const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+        dir.position.set(5, 12, 8);
+        three.scene.add(dir);
+
+        three.controls = new OrbitControls(three.camera, glCanvas);
+        three.controls.enableDamping = true;
+        three.controls.dampingFactor = 0.08;
+
+        three.resizeObserver = new ResizeObserver(() => {
+            if (!three.renderer || viewMode !== 'webgl') return;
+            const rw = viewer.clientWidth;
+            const rh = viewer.clientHeight;
+            if (rw < 2 || rh < 2) return;
+            three.camera.aspect = rw / rh;
+            three.camera.updateProjectionMatrix();
+            three.renderer.setSize(rw, rh);
         });
+        three.resizeObserver.observe(viewer);
+
+        let last = performance.now();
+        let frames = 0;
+        let acc = 0;
+        function loop(t) {
+            three.raf = requestAnimationFrame(loop);
+            if (viewMode !== 'webgl' || !three.renderer) return;
+            const dt = t - last;
+            last = t;
+            frames++;
+            acc += dt;
+            if (acc >= 500) {
+                const fps = Math.round((frames * 1000) / acc);
+                updatePerfWebgl(fps, acc / frames);
+                frames = 0;
+                acc = 0;
+            }
+            three.controls.update();
+            three.renderer.render(three.scene, three.camera);
+        }
+        three.raf = requestAnimationFrame(loop);
     }
+
+    function stopThreeLoopDisplay() {
+        if (three.resizeObserver) {
+            three.resizeObserver.disconnect();
+            three.resizeObserver = null;
+        }
+        if (three.raf) {
+            cancelAnimationFrame(three.raf);
+            three.raf = 0;
+        }
+        disposeThreeContent();
+        if (three.controls) {
+            three.controls.dispose();
+            three.controls = null;
+        }
+        if (three.renderer) {
+            three.renderer.dispose();
+            three.renderer = null;
+            three.scene = null;
+            three.camera = null;
+        }
+        glCanvas.style.display = 'none';
+    }
+
+    async function loadWebGlModel(objectKey) {
+        if (!isObjKey(objectKey)) {
+            showError('Для WebGL нужен файл .obj');
+            setLoading(false);
+            return;
+        }
+        setLoading(true);
+        setModelSelectionEnabled(false);
+        try {
+            const url = '/files/viewer-obj?key=' + encodeURIComponent(objectKey);
+            const res = await fetch(url);
+            if (!res.ok) {
+                throw new Error(res.status === 400 ? 'Файл не OBJ или недоступен' : 'HTTP ' + res.status);
+            }
+            const text = await res.text();
+            initThreeIfNeeded();
+            disposeThreeContent();
+
+            const loader = new OBJLoader();
+            const group = loader.parse(text);
+            group.traverse((child) => {
+                if (child.isMesh) {
+                    child.material = new THREE.MeshStandardMaterial({
+                        color: 0xaeb8d8,
+                        metalness: 0.15,
+                        roughness: 0.55,
+                        flatShading: false
+                    });
+                }
+            });
+
+            const box = new THREE.Box3().setFromObject(group);
+            if (box.isEmpty()) {
+                throw new Error('Пустая геометрия');
+            }
+            const sphere = box.getBoundingSphere(new THREE.Sphere());
+            three.root = group;
+            three.scene.add(group);
+
+            three.controls.target.copy(sphere.center);
+            const r = Math.max(sphere.radius, 1e-6);
+            three.camera.near = r * 0.01;
+            three.camera.far = r * 50;
+            three.camera.updateProjectionMatrix();
+            three.camera.position.copy(sphere.center);
+            three.camera.position.z += r * 2.8;
+            three.camera.lookAt(sphere.center);
+            three.controls.update();
+
+            glCanvas.style.display = 'block';
+            img.style.display = 'none';
+            document.getElementById('perfOverlay').style.display = 'block';
+        } catch (e) {
+            console.error(e);
+            showError('WebGL: ' + (e.message || e));
+        } finally {
+            setLoading(false);
+            setModelSelectionEnabled(true);
+        }
+    }
+
+    function applyViewMode() {
+        const radios = document.querySelectorAll('input[name="viewMode"]');
+        viewMode = [...radios].find(r => r.checked)?.value || 'server';
+
+        if (ws) {
+            ws.close();
+            ws = null;
+        }
+        img.style.display = 'none';
+        if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+        img.src = '';
+        perf.frameTimes = [];
+        perf.lastTime = 0;
+
+        if (viewMode === 'webgl') {
+            stopThreeLoopDisplay();
+            three.renderer = null;
+            initThreeIfNeeded();
+            if (currentModelId) {
+                if (isObjKey(currentModelId)) loadWebGlModel(currentModelId);
+                else showError('Выберите модель .obj для WebGL');
+            }
+        } else {
+            if (three.renderer) stopThreeLoopDisplay();
+            three.renderer = null;
+            glCanvas.style.display = 'none';
+            document.getElementById('perfOverlay').style.display = 'none';
+            if (currentModelId) connectWebSocket(currentModelId);
+        }
+    }
+
+    document.querySelectorAll('input[name="viewMode"]').forEach(r => {
+        r.addEventListener('change', () => applyViewMode());
+    });
+
+    img.addEventListener('error', () => {
+        showError('Кадр с сервера не отображается (ошибка загрузки изображения).');
+    });
 
     function connectWebSocket(modelId) {
+        if (viewMode !== 'server') return;
         if (ws) ws.close();
 
         setLoading(true);
@@ -220,23 +501,24 @@
         perf.frameTimes = [];
         perf.lastTime = 0;
 
-        const wsUrl = `ws://${window.location.host}/ws/render/${encodeURIComponent(modelId)}`;
+        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProto}//${window.location.host}/ws/render/${encodeURIComponent(modelId)}`;
         ws = new WebSocket(wsUrl);
         ws.binaryType = 'blob';
 
         ws.onopen = () => {
             reconnectAttempts = 0;
-            const msg = { type: 'rotate', azimuth: 0, elevation: 0 };
-            ws.send(JSON.stringify(msg));
+            ws.send(JSON.stringify({ type: 'rotate', azimuth: 0, elevation: 0 }));
         };
 
         ws.onmessage = (event) => {
             if (event.data instanceof Blob) {
-                updatePerf(event.data.size);
+                updatePerfServer(event.data.size);
                 const url = URL.createObjectURL(event.data);
                 if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
                 img.src = url;
                 img.style.display = 'block';
+                glCanvas.style.display = 'none';
                 setLoading(false);
                 setModelSelectionEnabled(true);
                 if (pendingUpdate) sendRotate(rotationState.azimuth, rotationState.elevation);
@@ -244,7 +526,7 @@
         };
 
         ws.onerror = () => {
-            showError('Ошибка соединения');
+            showError('Ошибка соединения WebSocket');
             setLoading(false);
             setModelSelectionEnabled(true);
             if (currentModelId) scheduleReconnect(currentModelId);
@@ -253,7 +535,7 @@
         ws.onclose = (e) => {
             setLoading(false);
             setModelSelectionEnabled(true);
-            if (e.code !== 1000 && currentModelId) scheduleReconnect(currentModelId);
+            if (e.code !== 1000 && currentModelId && viewMode === 'server') scheduleReconnect(currentModelId);
         };
     }
 
@@ -291,7 +573,7 @@
     }
 
     function handleMouseMove(e) {
-        if (!rotationState.isDragging) return;
+        if (viewMode !== 'server' || !rotationState.isDragging) return;
         const dx = e.movementX ?? 0;
         const dy = e.movementY ?? 0;
         const s = MOUSE_SENSITIVITY * (window.devicePixelRatio || 1);
@@ -321,7 +603,7 @@
         const now = performance.now();
         const dt = Math.min(now - rotationState.lastFrameTime, 32) / 16.67;
 
-        if (!rotationState.isDragging &&
+        if (viewMode === 'server' && !rotationState.isDragging &&
             (Math.abs(rotationState.velocityX) > MIN_VELOCITY || Math.abs(rotationState.velocityY) > MIN_VELOCITY)) {
             rotationState.azimuth += rotationState.velocityX * dt;
             rotationState.elevation += rotationState.velocityY * dt;
@@ -340,7 +622,7 @@
                     rotationState.lastUpdateTime = now;
                 }
             }
-        } else if (!rotationState.isDragging) {
+        } else if (viewMode === 'server' && !rotationState.isDragging) {
             rotationState.velocityX = 0;
             rotationState.velocityY = 0;
         }
@@ -350,6 +632,7 @@
     }
 
     viewer.addEventListener('mousedown', (e) => {
+        if (viewMode !== 'server') return;
         e.preventDefault();
         rotationState.isDragging = true;
         rotationState.velocityX = 0;
@@ -374,46 +657,65 @@
         }
     });
 
+    function selectModel(key) {
+        currentModelId = key;
+        if (viewMode === 'webgl') {
+            if (isObjKey(key)) loadWebGlModel(key);
+            else showError('В режиме WebGL доступны только .obj');
+        } else {
+            connectWebSocket(key);
+        }
+    }
+
     async function loadModels() {
         try {
             const res = await fetch('/files');
             if (!res.ok) throw new Error('Список моделей недоступен');
             const models = await res.json();
-            const listEl = document.getElementById('modelList');
+            const itemsEl = document.getElementById('modelItems');
             const noModels = document.getElementById('noModels');
+
+            itemsEl.innerHTML = '';
 
             if (models.length === 0) {
                 noModels.textContent = 'Нет моделей';
-                setModelSelectionEnabled(true);
+                noModels.style.display = 'block';
                 return;
             }
 
             noModels.style.display = 'none';
-            listEl.innerHTML = '<h3>Модели</h3>';
+
             models.forEach(m => {
                 if (!m.s3ObjectKey) return;
                 const div = document.createElement('div');
                 div.className = 'model-item';
-                div.textContent = m.fileName || m.s3ObjectKey || 'Модель';
+                if (!isObjKey(m.s3ObjectKey)) div.classList.add('dim');
+                div.textContent = (m.fileName || m.s3ObjectKey || 'Модель') + (isObjKey(m.s3ObjectKey) ? '' : ' (не OBJ)');
                 div.dataset.modelId = m.s3ObjectKey;
                 div.onclick = () => {
+                    if (!isObjKey(m.s3ObjectKey) && viewMode === 'webgl') {
+                        showError('Для WebGL выберите файл .obj');
+                        return;
+                    }
                     document.querySelectorAll('.model-item').forEach(el => el.classList.remove('active'));
                     div.classList.add('active');
-                    currentModelId = m.s3ObjectKey;
-                    connectWebSocket(m.s3ObjectKey);
+                    selectModel(m.s3ObjectKey);
                 };
-                listEl.appendChild(div);
+                itemsEl.appendChild(div);
             });
 
-            const first = document.querySelector('.model-item');
-            if (first) {
-                first.classList.add('active');
-                currentModelId = models[0].s3ObjectKey;
-                connectWebSocket(models[0].s3ObjectKey);
+            const firstObj = models.find(m => m.s3ObjectKey && isObjKey(m.s3ObjectKey));
+            const first = firstObj || models[0];
+            if (first && first.s3ObjectKey) {
+                itemsEl.querySelectorAll('.model-item').forEach(el => {
+                    if (el.dataset.modelId === first.s3ObjectKey) el.classList.add('active');
+                });
+                currentModelId = first.s3ObjectKey;
+                if (viewMode === 'webgl' && isObjKey(first.s3ObjectKey)) loadWebGlModel(first.s3ObjectKey);
+                else if (viewMode === 'server') connectWebSocket(first.s3ObjectKey);
             }
         } catch (e) {
             showError('Ошибка загрузки списка: ' + e.message);
-            setModelSelectionEnabled(true);
         }
     }
 
@@ -424,6 +726,7 @@
 
     window.addEventListener('beforeunload', () => {
         if (ws) ws.close();
+        stopThreeLoopDisplay();
     });
 </script>
 </body>

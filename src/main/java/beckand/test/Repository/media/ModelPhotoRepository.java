@@ -1,6 +1,6 @@
-package beckand.test.Repository;
+package beckand.test.Repository.media;
 
-import beckand.test.Model.ModelPhoto;
+import beckand.test.Model.media.ModelPhoto;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -10,3 +10,4 @@ import java.util.List;
 public interface ModelPhotoRepository extends JpaRepository<ModelPhoto, Integer> {
     List<ModelPhoto> findByModelObjectKeyOrderByDisplayOrderAsc(String modelObjectKey);
 }
+

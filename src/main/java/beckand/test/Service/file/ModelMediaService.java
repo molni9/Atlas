@@ -1,16 +1,16 @@
-package beckand.test.Service;
+package beckand.test.Service.file;
 
-import beckand.test.DTO.MediaItemDto;
-import beckand.test.DTO.ModelMetaResponse;
-import beckand.test.DTO.SliceItemDto;
-import beckand.test.Model.FileAttributes;
-import beckand.test.Model.ModelPhoto;
-import beckand.test.Model.ModelSlice;
-import beckand.test.Model.ModelVideo;
-import beckand.test.Repository.FileAttributesRepository;
-import beckand.test.Repository.ModelPhotoRepository;
-import beckand.test.Repository.ModelSliceRepository;
-import beckand.test.Repository.ModelVideoRepository;
+import beckand.test.DTO.media.MediaItemDto;
+import beckand.test.DTO.model.ModelMetaResponse;
+import beckand.test.DTO.media.SliceItemDto;
+import beckand.test.Model.file.FileAttributes;
+import beckand.test.Model.media.ModelPhoto;
+import beckand.test.Model.media.ModelSlice;
+import beckand.test.Model.media.ModelVideo;
+import beckand.test.Repository.file.FileAttributesRepository;
+import beckand.test.Repository.media.ModelPhotoRepository;
+import beckand.test.Repository.media.ModelSliceRepository;
+import beckand.test.Repository.media.ModelVideoRepository;
 import io.minio.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -209,3 +209,4 @@ public class ModelMediaService {
         }
     }
 }
+

@@ -1,10 +1,10 @@
-package beckand.test.Controller;
+package beckand.test.Controller.file;
 
-import beckand.test.DTO.MediaItemDto;
-import beckand.test.DTO.ModelMetaResponse;
-import beckand.test.DTO.ModelMetaUpdateRequest;
-import beckand.test.DTO.SliceItemDto;
-import beckand.test.Service.ModelMediaService;
+import beckand.test.DTO.media.MediaItemDto;
+import beckand.test.DTO.model.ModelMetaResponse;
+import beckand.test.DTO.model.ModelMetaUpdateRequest;
+import beckand.test.DTO.media.SliceItemDto;
+import beckand.test.Service.file.ModelMediaService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -163,3 +163,4 @@ public class ModelMetaController {
         }
     }
 }
+

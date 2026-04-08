@@ -1,4 +1,4 @@
-package beckand.test.Model;
+package beckand.test.Model.media;
 
 import jakarta.persistence.*;
 import lombok.Data;
@@ -21,3 +21,4 @@ public class ModelSlice {
     @Column(name = "display_order")
     private Integer displayOrder = 0;
 }
+

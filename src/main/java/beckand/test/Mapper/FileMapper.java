@@ -1,7 +1,7 @@
 package beckand.test.Mapper;
 
-import beckand.test.DTO.FileDTO;
-import beckand.test.Model.FileAttributes;
+import beckand.test.DTO.file.FileDTO;
+import beckand.test.Model.file.FileAttributes;
 import org.springframework.stereotype.Component;
 
 @Component

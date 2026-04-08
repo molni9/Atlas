@@ -1,14 +1,17 @@
-package beckand.test.Controller;
+package beckand.test.Controller.file;
 
-import beckand.test.DTO.FileDTO;
-import beckand.test.DTO.FileUploadRequest;
-import beckand.test.Service.FileService;
-import beckand.test.Service.RenderService;
+import beckand.test.DTO.file.FileDTO;
+import beckand.test.DTO.file.FileUploadRequest;
+import beckand.test.Service.file.FileService;
+import beckand.test.Service.render.RenderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -57,7 +60,33 @@ public class FileController {
         return ResponseEntity.ok(fileService.getFileInfo(objectKey));
     }
 
-    // Содержимое файла (OBJ) не отдаём через API — только серверный рендер по WebSocket, чтобы модель нельзя было скачать с клиента.
+    @Operation(
+            summary = "OBJ для просмотра в браузере (WebGL)",
+            description = "Отдаёт текст OBJ для клиентского Three.js. В продакшене ограничьте авторизацией — геометрия доступна для скачивания."
+    )
+    @GetMapping(value = "/viewer-obj", produces = "model/obj")
+    public ResponseEntity<Resource> getObjForWebViewer(
+            @Parameter(description = "Ключ объекта в хранилище", required = true)
+            @RequestParam("key") String objectKey
+    ) {
+        FileDTO info = fileService.getFileInfo(objectKey);
+        if (!isObjForViewer(info, objectKey)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        }
+        InputStream in = fileService.getFileContent(objectKey);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("model/obj"))
+                .header("Cache-Control", "private, max-age=60")
+                .body(new InputStreamResource(in));
+    }
+
+    private static boolean isObjForViewer(FileDTO info, String key) {
+        if (key != null && key.toLowerCase().endsWith(".obj")) {
+            return true;
+        }
+        String ct = info.getFileType();
+        return ct != null && (ct.toLowerCase().contains("obj") || "model/obj".equalsIgnoreCase(ct.trim()));
+    }
 
     @Operation(summary = "Получить рендер 3D модели", description = "Возвращает изображение рендера 3D модели")
     @GetMapping("/{objectKey:.+}/render")
@@ -82,3 +111,4 @@ public class FileController {
         }
     }
 }
+
