@@ -22,6 +22,8 @@ RUN apt-get update && apt-get install -y \
     libxtst6 \
     libxi6 \
     xvfb \
+    fontconfig \
+    libharfbuzz0b \
     && rm -rf /var/lib/apt/lists/*
 
 # Копирование слоев приложения

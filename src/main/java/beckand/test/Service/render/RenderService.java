@@ -47,6 +47,9 @@ public class RenderService {
     private int maxCacheEntries;
     @Value("${render.stream.fps:20}")
     private int renderStreamFps;
+    /** 0 отключает MSAA — нужно для Mesa/llvmpipe в Docker; для GPU можно 4–8 */
+    @Value("${render.gl.samples:0}")
+    private int renderGlSamples;
 
     private static final int MAX_RENDER_SIZE = 2048;
 
@@ -100,12 +103,15 @@ public class RenderService {
             if (profile == null) throw new RuntimeException("GL2 profile is not available");
 
             GLCapabilities capabilities = new GLCapabilities(profile);
-            capabilities.setHardwareAccelerated(true);
+            boolean softwareGl = "1".equals(System.getenv("LIBGL_ALWAYS_SOFTWARE"));
+            capabilities.setHardwareAccelerated(!softwareGl);
             capabilities.setDoubleBuffered(true);
             capabilities.setDepthBits(24);
-            capabilities.setSampleBuffers(true);
-            capabilities.setNumSamples(8);
+            int samples = Math.max(0, Math.min(16, renderGlSamples));
+            capabilities.setSampleBuffers(samples > 0);
+            capabilities.setNumSamples(samples > 0 ? samples : 0);
             capabilities.setOnscreen(false);
+            log.info("GL capabilities: hardwareAccelerated={} msaaSamples={}", !softwareGl, samples);
 
             GLDrawableFactory factory = null;
             try {
