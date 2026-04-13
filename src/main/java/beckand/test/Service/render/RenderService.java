@@ -51,6 +51,15 @@ public class RenderService {
     /** 0 отключает MSAA — нужно для Mesa/llvmpipe в Docker; для GPU можно 4–8 */
     @Value("${render.gl.samples:0}")
     private int renderGlSamples;
+    /**
+     * Доля размера GL-кадра для JPEG при вращении (final=false). 1.0 = полный размер, выше нагрузка.
+     * Раньше было жёстко 0.5.
+     */
+    @Value("${render.preview.scale:0.75}")
+    private double previewScale;
+    /** Качество JPEG для превью при вращении (0.35–0.95). Финальный кадр по-прежнему от render.jpeg.quality. */
+    @Value("${render.preview.quality:0.84}")
+    private float previewJpegQuality;
 
     private static final int MAX_RENDER_SIZE = 2048;
 
@@ -448,6 +457,10 @@ public class RenderService {
         }
     }
 
+    private static float clampPreviewJpegQuality(float q) {
+        return Math.min(0.95f, Math.max(0.35f, q));
+    }
+
     private byte[] renderStubJpeg(String objectKey, double azimuth, double elevation) throws IOException {
         BufferedImage bi = new BufferedImage(Math.max(1, renderWidth), Math.max(1, renderHeight), BufferedImage.TYPE_INT_RGB);
         java.awt.Graphics2D g = bi.createGraphics();
@@ -592,10 +605,11 @@ public class RenderService {
         }
 
         BufferedImage toEncode = full;
-        float quality = finalFrame ? Math.max(0.85f, jpegQuality) : Math.min(0.7f, Math.max(0.4f, jpegQuality));
+        float quality = finalFrame ? Math.max(0.85f, jpegQuality) : clampPreviewJpegQuality(previewJpegQuality);
         if (!finalFrame) {
-            int w = Math.max(1, renderWidth / 2);
-            int h = Math.max(1, renderHeight / 2);
+            double scale = Math.min(1.0, Math.max(0.25, previewScale));
+            int w = Math.max(1, (int) Math.round(renderWidth * scale));
+            int h = Math.max(1, (int) Math.round(renderHeight * scale));
             BufferedImage scaled = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
             java.awt.Graphics2D g2 = scaled.createGraphics();
             g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
@@ -675,7 +689,7 @@ public class RenderService {
             }
         }
 
-        float quality = highQuality ? Math.max(0.85f, jpegQuality) : Math.min(0.7f, Math.max(0.4f, jpegQuality));
+        float quality = highQuality ? Math.max(0.85f, jpegQuality) : clampPreviewJpegQuality(previewJpegQuality);
         return encodeJpeg(full, quality);
     }
 

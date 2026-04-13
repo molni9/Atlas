@@ -26,6 +26,9 @@ services:
       RENDER_GL_SAMPLES: "0"
       RENDER_WIDTH: 1280
       RENDER_HEIGHT: 720
+      # Превью при вращении: 0.85–1.0 заметно чётче; 1.0 = без уменьшения перед JPEG
+      RENDER_PREVIEW_SCALE: "0.85"
+      RENDER_PREVIEW_QUALITY: "0.88"
       RENDER_STREAM_FPS: 15
     depends_on:
       minio:
