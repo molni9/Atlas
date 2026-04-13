@@ -94,6 +94,8 @@
             height: 100%;
             display: none;
             z-index: 1;
+            background: #0f0f1a;
+            /* как у #viewer — без белой вспышки между кадрами */
         }
         #serverFrameStack .server-frame {
             position: absolute;
@@ -106,7 +108,9 @@
             user-select: none;
             cursor: grab;
             image-rendering: auto;
-            transition: opacity 52ms ease-out;
+            /* без transition: при частой смене JPEG opacity-анимация даёт мерцание */
+            transition: none;
+            backface-visibility: hidden;
         }
         #viewer.server-dragging { cursor: grabbing; }
         #glCanvas {
@@ -533,10 +537,6 @@
             outgoing.style.opacity = '0';
             outgoing.style.zIndex = '1';
             outgoing.style.pointerEvents = 'none';
-            if (outgoing.dataset.blobUrl) {
-                URL.revokeObjectURL(outgoing.dataset.blobUrl);
-                delete outgoing.dataset.blobUrl;
-            }
             incoming.dataset.blobUrl = url;
             wsFrameUseAlt = !wsFrameUseAlt;
             serverFrameStack.style.display = 'block';
@@ -552,10 +552,22 @@
             }
         };
         incoming.onload = () => {
+            const run = () => {
+                const oldBlobUrl = outgoing.dataset.blobUrl;
+                requestAnimationFrame(() => {
+                    reveal();
+                    if (oldBlobUrl) {
+                        requestAnimationFrame(() => {
+                            URL.revokeObjectURL(oldBlobUrl);
+                            delete outgoing.dataset.blobUrl;
+                        });
+                    }
+                });
+            };
             if (incoming.decode) {
-                incoming.decode().then(reveal).catch(reveal);
+                incoming.decode().then(run).catch(run);
             } else {
-                reveal();
+                run();
             }
         };
         incoming.src = url;
