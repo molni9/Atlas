@@ -86,7 +86,16 @@
             overflow: hidden;
             box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
         }
-        #modelImage {
+        #serverFrameStack {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            display: none;
+            z-index: 1;
+        }
+        #serverFrameStack .server-frame {
             position: absolute;
             left: 0;
             top: 0;
@@ -97,9 +106,9 @@
             user-select: none;
             cursor: grab;
             image-rendering: auto;
-            z-index: 1;
+            transition: opacity 52ms ease-out;
         }
-        #modelImage.grabbing { cursor: grabbing; }
+        #viewer.server-dragging { cursor: grabbing; }
         #glCanvas {
             position: absolute;
             left: 0;
@@ -172,7 +181,10 @@
         <span id="perfExtra">—</span>
     </div>
     <canvas id="glCanvas" tabindex="-1" style="display:none;"></canvas>
-    <img id="modelImage" src="" alt="Рендер" draggable="false" style="display:none;">
+    <div id="serverFrameStack">
+        <img id="modelImage" class="server-frame" src="" alt="Рендер" draggable="false" decoding="async">
+        <img id="modelImageAlt" class="server-frame" src="" alt="" draggable="false" decoding="async" style="opacity:0;z-index:1;pointer-events:none;">
+    </div>
 </div>
 <div id="loading">Загрузка…</div>
 <div id="errorMessage"></div>
@@ -183,8 +195,12 @@
     import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 
     const img = document.getElementById('modelImage');
+    const imgAlt = document.getElementById('modelImageAlt');
+    const serverFrameStack = document.getElementById('serverFrameStack');
     const viewer = document.getElementById('viewer');
     const glCanvas = document.getElementById('glCanvas');
+    /** Чередование буферов JPEG: следующий кадр в «скрытый» img, затем короткий кроссфейд. */
+    let wsFrameUseAlt = false;
 
     let viewMode = 'server';
     let ws = null;
@@ -437,7 +453,7 @@
             three.controls.update();
 
             glCanvas.style.display = 'block';
-            img.style.display = 'none';
+            serverFrameStack.style.display = 'none';
             document.getElementById('perfOverlay').style.display = 'block';
         } catch (e) {
             console.error(e);
@@ -456,9 +472,7 @@
             ws.close();
             ws = null;
         }
-        img.style.display = 'none';
-        if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
-        img.src = '';
+        clearServerFrameBuffers();
         perf.frameTimes = [];
         perf.lastTime = 0;
 
@@ -483,9 +497,69 @@
         r.addEventListener('change', () => applyViewMode());
     });
 
-    img.addEventListener('error', () => {
+    function onServerFrameImgError() {
         showError('Кадр с сервера не отображается (ошибка загрузки изображения).');
-    });
+    }
+    img.addEventListener('error', onServerFrameImgError);
+    imgAlt.addEventListener('error', onServerFrameImgError);
+
+    function clearServerFrameBuffers() {
+        [img, imgAlt].forEach(el => {
+            if (el.dataset.blobUrl) {
+                URL.revokeObjectURL(el.dataset.blobUrl);
+                delete el.dataset.blobUrl;
+            }
+            el.removeAttribute('src');
+        });
+        img.style.opacity = '1';
+        img.style.zIndex = '2';
+        img.style.pointerEvents = 'auto';
+        imgAlt.style.opacity = '0';
+        imgAlt.style.zIndex = '1';
+        imgAlt.style.pointerEvents = 'none';
+        wsFrameUseAlt = false;
+        serverFrameStack.style.display = 'none';
+    }
+
+    function applyServerJpegBlob(blob) {
+        updatePerfServer(blob.size);
+        const url = URL.createObjectURL(blob);
+        const incoming = wsFrameUseAlt ? imgAlt : img;
+        const outgoing = wsFrameUseAlt ? img : imgAlt;
+        const reveal = () => {
+            incoming.style.opacity = '1';
+            incoming.style.zIndex = '2';
+            incoming.style.pointerEvents = 'auto';
+            outgoing.style.opacity = '0';
+            outgoing.style.zIndex = '1';
+            outgoing.style.pointerEvents = 'none';
+            if (outgoing.dataset.blobUrl) {
+                URL.revokeObjectURL(outgoing.dataset.blobUrl);
+                delete outgoing.dataset.blobUrl;
+            }
+            incoming.dataset.blobUrl = url;
+            wsFrameUseAlt = !wsFrameUseAlt;
+            serverFrameStack.style.display = 'block';
+            glCanvas.style.display = 'none';
+            setLoading(false);
+            setModelSelectionEnabled(true);
+            wsRenderInFlight = false;
+            if (pendingFinalFrame) {
+                pendingFinalFrame = false;
+                sendRotate(rotationState.azimuth, rotationState.elevation, true);
+            } else if (pendingUpdate) {
+                sendRotate(rotationState.azimuth, rotationState.elevation);
+            }
+        };
+        incoming.onload = () => {
+            if (incoming.decode) {
+                incoming.decode().then(reveal).catch(reveal);
+            } else {
+                reveal();
+            }
+        };
+        incoming.src = url;
+    }
 
     function connectWebSocket(modelId) {
         if (viewMode !== 'server') return;
@@ -493,6 +567,7 @@
 
         setLoading(true);
         setModelSelectionEnabled(false);
+        clearServerFrameBuffers();
 
         rotationState.azimuth = 0;
         rotationState.elevation = 0;
@@ -516,21 +591,7 @@
 
         ws.onmessage = (event) => {
             if (event.data instanceof Blob) {
-                updatePerfServer(event.data.size);
-                const url = URL.createObjectURL(event.data);
-                if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
-                img.src = url;
-                img.style.display = 'block';
-                glCanvas.style.display = 'none';
-                setLoading(false);
-                setModelSelectionEnabled(true);
-                wsRenderInFlight = false;
-                if (pendingFinalFrame) {
-                    pendingFinalFrame = false;
-                    sendRotate(rotationState.azimuth, rotationState.elevation, true);
-                } else if (pendingUpdate) {
-                    sendRotate(rotationState.azimuth, rotationState.elevation);
-                }
+                applyServerJpegBlob(event.data);
             }
         };
 
@@ -650,13 +711,13 @@
         rotationState.isDragging = true;
         rotationState.velocityX = 0;
         rotationState.velocityY = 0;
-        img.classList.add('grabbing');
+        viewer.classList.add('server-dragging');
     });
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', () => {
         if (rotationState.isDragging) {
             rotationState.isDragging = false;
-            img.classList.remove('grabbing');
+            viewer.classList.remove('server-dragging');
             if (ws && ws.readyState === WebSocket.OPEN)
                 sendRotate(rotationState.azimuth, rotationState.elevation, true);
         }
@@ -664,7 +725,7 @@
     document.addEventListener('mouseleave', () => {
         if (rotationState.isDragging) {
             rotationState.isDragging = false;
-            img.classList.remove('grabbing');
+            viewer.classList.remove('server-dragging');
             rotationState.velocityX = 0;
             rotationState.velocityY = 0;
         }

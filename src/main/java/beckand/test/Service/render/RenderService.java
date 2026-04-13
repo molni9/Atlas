@@ -461,6 +461,22 @@ public class RenderService {
         return Math.min(0.95f, Math.max(0.35f, q));
     }
 
+    /** GL readPixels — нижний ряд первый; в BufferedImage Y сверху вниз. */
+    private void fillRgbFromGlReadBuffer(BufferedImage dst) {
+        int w = renderWidth;
+        int h = renderHeight;
+        int[] pixels = ((DataBufferInt) dst.getRaster().getDataBuffer()).getData();
+        ByteBuffer pb = pixelBuffer;
+        for (int y = 0; y < h; y++) {
+            int srcRow = (h - 1 - y) * w * 4;
+            int dstRow = y * w;
+            for (int x = 0; x < w; x++) {
+                int s = srcRow + (x << 2);
+                pixels[dstRow + x] = (pb.get(s) & 0xFF) << 16 | (pb.get(s + 1) & 0xFF) << 8 | (pb.get(s + 2) & 0xFF);
+            }
+        }
+    }
+
     private byte[] renderStubJpeg(String objectKey, double azimuth, double elevation) throws IOException {
         BufferedImage bi = new BufferedImage(Math.max(1, renderWidth), Math.max(1, renderHeight), BufferedImage.TYPE_INT_RGB);
         java.awt.Graphics2D g = bi.createGraphics();
@@ -518,16 +534,7 @@ public class RenderService {
         }
 
         BufferedImage image = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_RGB);
-        int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
-        for (int i = 0; i < renderHeight; i++) {
-            for (int j = 0; j < renderWidth; j++) {
-                int idx = (renderHeight - 1 - i) * renderWidth + j;
-                int r = pixelBuffer.get(idx * 4) & 0xFF;
-                int g = pixelBuffer.get(idx * 4 + 1) & 0xFF;
-                int b = pixelBuffer.get(idx * 4 + 2) & 0xFF;
-                pixels[i * renderWidth + j] = (r << 16) | (g << 8) | b;
-            }
-        }
+        fillRgbFromGlReadBuffer(image);
         byte[] out = encodeJpeg(image, jpegQuality);
         if (renderCache.size() >= maxCacheEntries) {
             Iterator<String> it = renderCache.keySet().iterator();
@@ -593,16 +600,7 @@ public class RenderService {
         }
 
         BufferedImage full = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_RGB);
-        int[] pixels = ((DataBufferInt) full.getRaster().getDataBuffer()).getData();
-        for (int i = 0; i < renderHeight; i++) {
-            for (int j = 0; j < renderWidth; j++) {
-                int idx = (renderHeight - 1 - i) * renderWidth + j;
-                int r = pixelBuffer.get(idx * 4) & 0xFF;
-                int g = pixelBuffer.get(idx * 4 + 1) & 0xFF;
-                int b = pixelBuffer.get(idx * 4 + 2) & 0xFF;
-                pixels[i * renderWidth + j] = (r << 16) | (g << 8) | b;
-            }
-        }
+        fillRgbFromGlReadBuffer(full);
 
         BufferedImage toEncode = full;
         float quality = finalFrame ? Math.max(0.85f, jpegQuality) : clampPreviewJpegQuality(previewJpegQuality);
@@ -678,16 +676,7 @@ public class RenderService {
         }
 
         BufferedImage full = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_RGB);
-        int[] pixels = ((DataBufferInt) full.getRaster().getDataBuffer()).getData();
-        for (int i = 0; i < renderHeight; i++) {
-            for (int j = 0; j < renderWidth; j++) {
-                int idx = (renderHeight - 1 - i) * renderWidth + j;
-                int r = pixelBuffer.get(idx * 4) & 0xFF;
-                int g = pixelBuffer.get(idx * 4 + 1) & 0xFF;
-                int b = pixelBuffer.get(idx * 4 + 2) & 0xFF;
-                pixels[i * renderWidth + j] = (r << 16) | (g << 8) | b;
-            }
-        }
+        fillRgbFromGlReadBuffer(full);
 
         float quality = highQuality ? Math.max(0.85f, jpegQuality) : clampPreviewJpegQuality(previewJpegQuality);
         return encodeJpeg(full, quality);
