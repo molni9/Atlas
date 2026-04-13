@@ -10,8 +10,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
 
+import java.io.EOFException;
 import java.io.InputStream;
 import java.net.URI;
+import java.nio.channels.ClosedChannelException;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -63,6 +65,10 @@ public class RenderWebSocketHandler implements WebSocketHandler {
                 }
             }
         } catch (Exception e) {
+            if (isBenignClientDisconnect(e)) {
+                log.debug("WebSocket client gone during rotate (session={}): {}", session.getId(), e.toString());
+                return;
+            }
             log.error("WebSocket message handling error", e);
             try {
                 if (session.isOpen()) {
@@ -72,9 +78,30 @@ public class RenderWebSocketHandler implements WebSocketHandler {
         }
     }
 
+    /** Клиент закрыл вкладку / обновил страницу — типичный broken pipe при sendBinary. */
+    private static boolean isBenignClientDisconnect(Throwable t) {
+        while (t != null) {
+            if (t instanceof ClosedChannelException || t instanceof EOFException) return true;
+            String msg = t.getMessage();
+            if (msg != null) {
+                String m = msg.toLowerCase();
+                if (m.contains("broken pipe")
+                        || m.contains("connection reset")
+                        || m.contains("connection aborted")
+                        || m.contains("forcibly closed")) return true;
+            }
+            t = t.getCause();
+        }
+        return false;
+    }
+
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
-        log.error("WebSocket transport error: {}", session.getId(), exception);
+        if (isBenignClientDisconnect(exception)) {
+            log.debug("WebSocket transport closed (session={}): {}", session.getId(), exception.toString());
+        } else {
+            log.error("WebSocket transport error: {}", session.getId(), exception);
+        }
     }
 
     @Override
