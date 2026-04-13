@@ -48,21 +48,27 @@ public class RenderWebSocketHandler implements WebSocketHandler {
                 double elevation = root.path("elevation").asDouble(0);
                 boolean finalFrame = root.path("final").asBoolean(false);
 
-                // Рендер только на сервере — отправляем клиенту только JPEG
-                long tMeta0 = System.nanoTime();
-                FileDTO info = fileService.getFileInfo(modelId);
-                long metaMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tMeta0);
-                try (InputStream is = fileService.getFileContent(modelId)) {
-                    long tRender0 = System.nanoTime();
-                    byte[] jpeg = renderService.renderModelAdaptive(modelId, is, info.getFileType(), azimuth, elevation, finalFrame);
-                    long renderMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tRender0);
-                    long tSend0 = System.nanoTime();
-                    session.sendMessage(new BinaryMessage(jpeg));
-                    long sendMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tSend0);
-                    long allMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tAll0);
-                    log.debug("WS rotate: session={} model={} final={} az={} el={} bytes={} metaMs={} renderMs={} sendMs={} totalMs={}",
-                            session.getId(), modelId, finalFrame, azimuth, elevation, jpeg.length, metaMs, renderMs, sendMs, allMs);
+                // Рендер на сервере; при уже загруженной модели не дергаем MinIO (иначе 503 / rate limit).
+                long metaMs = 0;
+                long tRender0 = System.nanoTime();
+                byte[] jpeg;
+                if (renderService.isModelLoaded(modelId)) {
+                    jpeg = renderService.renderModelAdaptive(modelId, null, null, azimuth, elevation, finalFrame);
+                } else {
+                    long tMeta0 = System.nanoTime();
+                    FileDTO info = fileService.getFileInfo(modelId);
+                    metaMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tMeta0);
+                    try (InputStream is = fileService.getFileContent(modelId)) {
+                        jpeg = renderService.renderModelAdaptive(modelId, is, info.getFileType(), azimuth, elevation, finalFrame);
+                    }
                 }
+                long renderMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tRender0);
+                long tSend0 = System.nanoTime();
+                session.sendMessage(new BinaryMessage(jpeg));
+                long sendMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tSend0);
+                long allMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tAll0);
+                log.debug("WS rotate: session={} model={} final={} az={} el={} bytes={} metaMs={} renderMs={} sendMs={} totalMs={}",
+                        session.getId(), modelId, finalFrame, azimuth, elevation, jpeg.length, metaMs, renderMs, sendMs, allMs);
             }
         } catch (Exception e) {
             if (isBenignClientDisconnect(e)) {

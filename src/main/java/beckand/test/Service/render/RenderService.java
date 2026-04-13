@@ -518,6 +518,11 @@ public class RenderService {
         return out;
     }
 
+    /** Модель уже в памяти и на GPU — повторно тянуть объект из MinIO не нужно (снижает нагрузку на S3). */
+    public boolean isModelLoaded(String objectKey) {
+        return objectKey != null && objectKey.equals(currentModelId) && currentModel != null && !stubMode && isInitialized;
+    }
+
     public byte[] renderModelAdaptive(String objectKey, InputStream modelStream, String fileType, double azimuth, double elevation, boolean finalFrame) throws IOException {
         if (stubMode || !isInitialized) return renderStubJpeg(objectKey, azimuth, elevation);
         long tAll0 = System.nanoTime();
@@ -532,6 +537,9 @@ public class RenderService {
         }
 
         if (!objectKey.equals(currentModelId)) {
+            if (modelStream == null) {
+                throw new IOException("Поток модели обязателен при первой загрузке объекта: " + objectKey);
+            }
             currentModel = ObjReader.read(modelStream);
             if (currentModel.getNumFaces() == 0 || currentModel.getNumVertices() == 0)
                 throw new IOException("Модель не содержит вершин или граней");
