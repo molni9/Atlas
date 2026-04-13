@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.FloatBuffer;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -72,6 +73,16 @@ public class RenderService {
     private volatile int highQualityFrames = 0;
     private volatile long framesRendered = 0;
     private volatile boolean glInfoLogged = false;
+
+    // --- GPU buffers (VBO) ---
+    // Interleaved layout per-vertex: nx, ny, nz, x, y, z (6 floats)
+    private static final int FLOATS_PER_VERTEX = 6;
+    private static final int BYTES_PER_FLOAT = 4;
+    private static final int VBO_STRIDE_BYTES = FLOATS_PER_VERTEX * BYTES_PER_FLOAT;
+    private volatile Obj pendingUploadModel = null;
+    private volatile boolean vboDirty = false;
+    private int vboId = 0;
+    private int vboVertexCount = 0;
 
     @Autowired(required = false)
     private MinioClient minioClient;
@@ -162,7 +173,15 @@ public class RenderService {
                 }
 
                 @Override
-                public void dispose(GLAutoDrawable d) { isInitialized = false; }
+                public void dispose(GLAutoDrawable d) {
+                    try {
+                        GL gl = d.getGL();
+                        if (gl instanceof GL2 gl2) {
+                            deleteVbo(gl2);
+                        }
+                    } catch (Throwable ignored) { }
+                    isInitialized = false;
+                }
 
                 @Override
                 public void display(GLAutoDrawable d) {
@@ -183,6 +202,20 @@ public class RenderService {
                     while (currentAzimuth < 0) currentAzimuth += 360;
                     currentElevation = Math.max(-80, Math.min(80, currentElevation));
 
+                    // Upload model VBO on GL thread (safe) when model changes
+                    if (vboDirty && pendingUploadModel != null) {
+                        try {
+                            uploadModelToVbo(gl2, pendingUploadModel);
+                            pendingUploadModel = null;
+                            vboDirty = false;
+                        } catch (Throwable e) {
+                            // If VBO upload fails, fall back to stub (better than hard crash)
+                            log.warn("VBO upload failed, switching to stub: {} - {}", e.getClass().getSimpleName(), e.getMessage());
+                            stubMode = true;
+                            return;
+                        }
+                    }
+
                     gl2.glMatrixMode(GL2.GL_PROJECTION);
                     gl2.glLoadIdentity();
                     glu.gluPerspective(45.0, (double) renderWidth / renderHeight, 0.1, 100.0);
@@ -197,31 +230,18 @@ public class RenderService {
                     double z = radius * Math.cos(el) * Math.cos(az);
                     glu.gluLookAt(x, y, z, centerX, centerY, centerZ, 0, 1, 0);
 
-                    if (currentModel != null) {
+                    if (currentModel != null && vboId != 0 && vboVertexCount > 0) {
                         gl2.glPushMatrix();
                         gl2.glTranslatef(-centerX, -centerY, -centerZ);
-                        gl2.glBegin(GL2.GL_TRIANGLES);
-                        for (int i = 0; i < currentModel.getNumFaces(); i++) {
-                            ObjFace face = currentModel.getFace(i);
-                            if (face.getNumVertices() == 3) {
-                                float[] vx = new float[3], vy = new float[3], vz = new float[3];
-                                for (int j = 0; j < 3; j++) {
-                                    int vi = face.getVertexIndex(j);
-                                    FloatTuple v = currentModel.getVertex(vi);
-                                    vx[j] = v.getX(); vy[j] = v.getY(); vz[j] = v.getZ();
-                                }
-                                float ex1 = vx[1] - vx[0], ey1 = vy[1] - vy[0], ez1 = vz[1] - vz[0];
-                                float ex2 = vx[2] - vx[0], ey2 = vy[2] - vy[0], ez2 = vz[2] - vz[0];
-                                float nx = ey1 * ez2 - ez1 * ey2, ny = ez1 * ex2 - ex1 * ez2, nz = ex1 * ey2 - ey1 * ex2;
-                                float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
-                                if (len > 1e-6f) { nx /= len; ny /= len; nz /= len; }
-                                for (int j = 0; j < 3; j++) {
-                                    gl2.glNormal3f(nx, ny, nz);
-                                    gl2.glVertex3f(vx[j], vy[j], vz[j]);
-                                }
-                            }
-                        }
-                        gl2.glEnd();
+                        gl2.glBindBuffer(GL.GL_ARRAY_BUFFER, vboId);
+                        gl2.glEnableClientState(GL2.GL_NORMAL_ARRAY);
+                        gl2.glEnableClientState(GL2.GL_VERTEX_ARRAY);
+                        gl2.glNormalPointer(GL.GL_FLOAT, VBO_STRIDE_BYTES, 0L);
+                        gl2.glVertexPointer(3, GL.GL_FLOAT, VBO_STRIDE_BYTES, (long) (3 * BYTES_PER_FLOAT));
+                        gl2.glDrawArrays(GL.GL_TRIANGLES, 0, vboVertexCount);
+                        gl2.glDisableClientState(GL2.GL_VERTEX_ARRAY);
+                        gl2.glDisableClientState(GL2.GL_NORMAL_ARRAY);
+                        gl2.glBindBuffer(GL.GL_ARRAY_BUFFER, 0);
                         gl2.glPopMatrix();
                     }
 
@@ -232,10 +252,11 @@ public class RenderService {
                     framesRendered++;
                     if (framesRendered == 1 || framesRendered % 120 == 0) {
                         long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
-                        log.debug("Render frame done: {}x{} ms={} az={} el={} faces={} verts={}",
+                        log.debug("Render frame done: {}x{} ms={} az={} el={} faces={} verts={} vboVerts={}",
                                 renderWidth, renderHeight, ms, currentAzimuth, currentElevation,
                                 currentModel != null ? currentModel.getNumFaces() : 0,
-                                currentModel != null ? currentModel.getNumVertices() : 0);
+                                currentModel != null ? currentModel.getNumVertices() : 0,
+                                vboVertexCount);
                     }
                     synchronized (renderLock) {
                         renderComplete = true;
@@ -292,6 +313,97 @@ public class RenderService {
             pixelBuffer = ByteBuffer.allocateDirect(size);
             pixelBuffer.order(ByteOrder.nativeOrder());
         }
+    }
+
+    private void deleteVbo(GL2 gl2) {
+        if (vboId != 0) {
+            try {
+                gl2.glDeleteBuffers(1, new int[]{vboId}, 0);
+            } catch (Throwable ignored) { }
+            vboId = 0;
+            vboVertexCount = 0;
+        }
+    }
+
+    private void uploadModelToVbo(GL2 gl2, Obj model) {
+        if (model == null) return;
+        // (Re)create VBO for current model
+        deleteVbo(gl2);
+        FloatBuffer interleaved = buildInterleavedNormalPosBuffer(model);
+        int verts = interleaved.remaining() / FLOATS_PER_VERTEX;
+        if (verts <= 0) throw new IllegalStateException("No vertices for VBO");
+
+        int[] ids = new int[1];
+        gl2.glGenBuffers(1, ids, 0);
+        vboId = ids[0];
+        gl2.glBindBuffer(GL.GL_ARRAY_BUFFER, vboId);
+        gl2.glBufferData(GL.GL_ARRAY_BUFFER, (long) interleaved.remaining() * BYTES_PER_FLOAT, interleaved, GL.GL_STATIC_DRAW);
+        gl2.glBindBuffer(GL.GL_ARRAY_BUFFER, 0);
+        vboVertexCount = verts;
+        log.info("VBO uploaded: id={} vertices={} (triangles={})", vboId, vboVertexCount, vboVertexCount / 3);
+    }
+
+    private FloatBuffer buildInterleavedNormalPosBuffer(Obj model) {
+        // Conservative estimate: fan-triangulate polygons (n-2 triangles)
+        long triCount = 0;
+        for (int i = 0; i < model.getNumFaces(); i++) {
+            ObjFace f = model.getFace(i);
+            int n = f.getNumVertices();
+            if (n >= 3) triCount += (long) (n - 2);
+        }
+        if (triCount <= 0) throw new IllegalStateException("Model has no drawable faces");
+
+        long vertexCount = triCount * 3L;
+        if (vertexCount > Integer.MAX_VALUE) throw new IllegalStateException("Model too large for VBO");
+
+        int floats = Math.toIntExact(vertexCount * FLOATS_PER_VERTEX);
+        ByteBuffer bb = ByteBuffer.allocateDirect((long) floats * BYTES_PER_FLOAT > Integer.MAX_VALUE ? Integer.MAX_VALUE : floats * BYTES_PER_FLOAT);
+        bb.order(ByteOrder.nativeOrder());
+        FloatBuffer fb = bb.asFloatBuffer();
+
+        for (int i = 0; i < model.getNumFaces(); i++) {
+            ObjFace face = model.getFace(i);
+            int n = face.getNumVertices();
+            if (n < 3) continue;
+            // triangle fan: (0, k, k+1)
+            int i0 = face.getVertexIndex(0);
+            FloatTuple v0 = model.getVertex(i0);
+            for (int k = 1; k + 1 < n; k++) {
+                FloatTuple v1 = model.getVertex(face.getVertexIndex(k));
+                FloatTuple v2 = model.getVertex(face.getVertexIndex(k + 1));
+
+                float ex1 = v1.getX() - v0.getX();
+                float ey1 = v1.getY() - v0.getY();
+                float ez1 = v1.getZ() - v0.getZ();
+                float ex2 = v2.getX() - v0.getX();
+                float ey2 = v2.getY() - v0.getY();
+                float ez2 = v2.getZ() - v0.getZ();
+                float nx = ey1 * ez2 - ez1 * ey2;
+                float ny = ez1 * ex2 - ex1 * ez2;
+                float nz = ex1 * ey2 - ey1 * ex2;
+                float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+                if (len > 1e-6f) {
+                    nx /= len;
+                    ny /= len;
+                    nz /= len;
+                } else {
+                    nx = 0f;
+                    ny = 1f;
+                    nz = 0f;
+                }
+
+                putVertex(fb, nx, ny, nz, v0);
+                putVertex(fb, nx, ny, nz, v1);
+                putVertex(fb, nx, ny, nz, v2);
+            }
+        }
+        fb.flip();
+        return fb;
+    }
+
+    private void putVertex(FloatBuffer fb, float nx, float ny, float nz, FloatTuple v) {
+        fb.put(nx).put(ny).put(nz);
+        fb.put(v.getX()).put(v.getY()).put(v.getZ());
     }
 
     private void updateModelBounds() {
@@ -368,6 +480,9 @@ public class RenderService {
                 throw new IOException("Модель не содержит вершин или граней");
             currentModelId = objectKey;
             updateModelBounds();
+            pendingUploadModel = currentModel;
+            vboDirty = true;
+            renderCache.clear();
         }
 
         targetAzimuth = qAz;
@@ -422,6 +537,9 @@ public class RenderService {
                 throw new IOException("Модель не содержит вершин или граней");
             currentModelId = objectKey;
             updateModelBounds();
+            pendingUploadModel = currentModel;
+            vboDirty = true;
+            renderCache.clear();
         }
 
         targetAzimuth = qAz;
@@ -492,6 +610,9 @@ public class RenderService {
             updateModelBounds();
             needsRender = true;
             highQualityFrames = Math.max(highQualityFrames, 3);
+            pendingUploadModel = currentModel;
+            vboDirty = true;
+            renderCache.clear();
         }
     }
 
