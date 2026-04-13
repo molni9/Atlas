@@ -487,6 +487,12 @@ public class RenderService {
 
         targetAzimuth = qAz;
         targetElevation = qEl;
+        currentAzimuth = qAz;
+        currentElevation = qEl;
+        while (currentAzimuth > 360f) currentAzimuth -= 360f;
+        while (currentAzimuth < 0f) currentAzimuth += 360f;
+        currentElevation = Math.max(-80f, Math.min(80f, currentElevation));
+
         needsRender = true;
         synchronized (renderLock) {
             renderComplete = false;
@@ -552,6 +558,14 @@ public class RenderService {
 
         targetAzimuth = qAz;
         targetElevation = qEl;
+        // Один кадр на запрос: без мгновенного совпадения current≈target сглаживание (20%/тик) даёт кадр «не там»
+        // и визуальные рывки при следующем target. Для JPEG по WS камера должна совпадать с квантованным углом.
+        currentAzimuth = qAz;
+        currentElevation = qEl;
+        while (currentAzimuth > 360f) currentAzimuth -= 360f;
+        while (currentAzimuth < 0f) currentAzimuth += 360f;
+        currentElevation = Math.max(-80f, Math.min(80f, currentElevation));
+
         needsRender = true;
         synchronized (renderLock) {
             renderComplete = false;
@@ -564,8 +578,6 @@ public class RenderService {
                 }
             }
         }
-
-        long tWait0 = System.nanoTime(); // not used further, kept for parity with previous logic
 
         BufferedImage full = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_RGB);
         int[] pixels = ((DataBufferInt) full.getRaster().getDataBuffer()).getData();
