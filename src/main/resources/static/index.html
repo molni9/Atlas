@@ -212,7 +212,9 @@
         lastSentElevation: 0
     };
 
-    let lastSuccessfulUpdate = 0;
+    /** Сервер: не более одного запроса без ответа — иначе кадры копятся в очереди WebSocket и растёт задержка. */
+    let wsRenderInFlight = false;
+    let pendingFinalFrame = false;
     let pendingUpdate = false;
 
     const perf = {
@@ -496,7 +498,8 @@
         rotationState.elevation = 0;
         rotationState.velocityX = 0;
         rotationState.velocityY = 0;
-        lastSuccessfulUpdate = 0;
+        wsRenderInFlight = false;
+        pendingFinalFrame = false;
         pendingUpdate = false;
         perf.frameTimes = [];
         perf.lastTime = 0;
@@ -508,7 +511,7 @@
 
         ws.onopen = () => {
             reconnectAttempts = 0;
-            ws.send(JSON.stringify({ type: 'rotate', azimuth: 0, elevation: 0 }));
+            sendRotate(0, 0);
         };
 
         ws.onmessage = (event) => {
@@ -521,11 +524,18 @@
                 glCanvas.style.display = 'none';
                 setLoading(false);
                 setModelSelectionEnabled(true);
-                if (pendingUpdate) sendRotate(rotationState.azimuth, rotationState.elevation);
+                wsRenderInFlight = false;
+                if (pendingFinalFrame) {
+                    pendingFinalFrame = false;
+                    sendRotate(rotationState.azimuth, rotationState.elevation, true);
+                } else if (pendingUpdate) {
+                    sendRotate(rotationState.azimuth, rotationState.elevation);
+                }
             }
         };
 
         ws.onerror = () => {
+            wsRenderInFlight = false;
             showError('Ошибка соединения WebSocket');
             setLoading(false);
             setModelSelectionEnabled(true);
@@ -533,6 +543,7 @@
         };
 
         ws.onclose = (e) => {
+            wsRenderInFlight = false;
             setLoading(false);
             setModelSelectionEnabled(true);
             if (e.code !== 1000 && currentModelId && viewMode === 'server') scheduleReconnect(currentModelId);
@@ -551,11 +562,12 @@
     function sendRotate(azimuth, elevation, isFinal) {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             pendingUpdate = true;
+            if (isFinal) pendingFinalFrame = true;
             return;
         }
-        const now = performance.now();
-        if (now - lastSuccessfulUpdate < UPDATE_INTERVAL) {
-            pendingUpdate = true;
+        if (viewMode === 'server' && wsRenderInFlight) {
+            if (isFinal) pendingFinalFrame = true;
+            else pendingUpdate = true;
             return;
         }
         try {
@@ -565,10 +577,11 @@
                 elevation: Math.round(elevation * 10) / 10,
                 final: !!isFinal
             }));
-            lastSuccessfulUpdate = now;
+            wsRenderInFlight = true;
             pendingUpdate = false;
         } catch (e) {
             pendingUpdate = true;
+            if (isFinal) pendingFinalFrame = true;
         }
     }
 
