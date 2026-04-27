@@ -66,6 +66,9 @@ public class RenderService {
     /** Отсечение невидимых задних граней — заметно дешевле для закрытых мешей. */
     @Value("${render.back-face-culling:true}")
     private boolean backFaceCulling;
+    /** При большом числе треугольников — ужать превью и шаг угла (только final=false), чтобы не лагало. */
+    @Value("${render.adaptive-heavy-model:true}")
+    private boolean adaptiveHeavyModel;
 
     private static final int MAX_RENDER_SIZE = 2048;
 
@@ -87,6 +90,8 @@ public class RenderService {
     private float centerX = 0, centerY = 0, centerZ = 0;
     /** Половина диагонали AABB после центрирования — для дистанции камеры и frustum. */
     private float modelBoundingRadius = 1f;
+    /** Треугольников после триангуляции (как VBO); для адаптивного превью и шага угла. */
+    private volatile long loadedModelTriangleCount = 0;
     private volatile int highQualityFrames = 0;
     private volatile long framesRendered = 0;
     private volatile boolean glInfoLogged = false;
@@ -455,7 +460,10 @@ public class RenderService {
     }
 
     private void updateModelBounds() {
-        if (currentModel == null) return;
+        if (currentModel == null) {
+            loadedModelTriangleCount = 0;
+            return;
+        }
         float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
         float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
         for (int i = 0; i < currentModel.getNumVertices(); i++) {
@@ -475,10 +483,52 @@ public class RenderService {
         float dz = maxZ - minZ;
         float diag = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
         modelBoundingRadius = Math.max(diag * 0.5f, 1e-4f);
+        loadedModelTriangleCount = countTriangles(currentModel);
+        if (adaptiveHeavyModel && loadedModelTriangleCount > 400_000) {
+            log.info("Тяжёлая сетка: {} тр. — при вращении включено адаптивное превью (меньше лагов)", loadedModelTriangleCount);
+        }
+    }
+
+    private int effectiveAngleStepDeg() {
+        if (!adaptiveHeavyModel) return Math.max(1, angleStepDeg);
+        int base = Math.max(1, angleStepDeg);
+        long n = loadedModelTriangleCount;
+        if (n > 3_500_000L) return Math.max(base, 12);
+        if (n > 2_000_000L) return Math.max(base, 8);
+        if (n > 1_000_000L) return Math.max(base, 6);
+        if (n > 500_000L) return Math.max(base, 4);
+        if (n > 200_000L) return Math.max(base, 3);
+        return base;
+    }
+
+    private double effectivePreviewScale(boolean finalFrame) {
+        if (finalFrame || !adaptiveHeavyModel) {
+            return Math.min(1.0, Math.max(0.25, previewScale));
+        }
+        double ps = Math.min(1.0, Math.max(0.25, previewScale));
+        long n = loadedModelTriangleCount;
+        if (n > 3_500_000L) return Math.min(ps, 0.26);
+        if (n > 2_000_000L) return Math.min(ps, 0.34);
+        if (n > 1_000_000L) return Math.min(ps, 0.45);
+        if (n > 500_000L) return Math.min(ps, 0.58);
+        if (n > 200_000L) return Math.min(ps, 0.72);
+        return ps;
+    }
+
+    private float effectivePreviewJpegQuality(boolean finalFrame) {
+        if (finalFrame) return Math.max(0.85f, jpegQuality);
+        if (!adaptiveHeavyModel) return clampPreviewJpegQuality(previewJpegQuality);
+        float q = clampPreviewJpegQuality(previewJpegQuality);
+        long n = loadedModelTriangleCount;
+        if (n > 3_500_000L) return Math.min(q, 0.52f);
+        if (n > 2_000_000L) return Math.min(q, 0.62f);
+        if (n > 1_000_000L) return Math.min(q, 0.72f);
+        if (n > 500_000L) return Math.min(q, 0.8f);
+        return q;
     }
 
     private int quantizeAngle(double angle) {
-        int step = Math.max(1, angleStepDeg);
+        int step = effectiveAngleStepDeg();
         int a = (int) Math.round(angle / step) * step;
         return Math.max(-360, Math.min(360, a));
     }
@@ -649,9 +699,9 @@ public class RenderService {
         fillRgbFromGlReadBuffer(full);
 
         BufferedImage toEncode = full;
-        float quality = finalFrame ? Math.max(0.85f, jpegQuality) : clampPreviewJpegQuality(previewJpegQuality);
+        float quality = effectivePreviewJpegQuality(finalFrame);
         if (!finalFrame) {
-            double scale = Math.min(1.0, Math.max(0.25, previewScale));
+            double scale = effectivePreviewScale(false);
             int w = Math.max(1, (int) Math.round(renderWidth * scale));
             int h = Math.max(1, (int) Math.round(renderHeight * scale));
             BufferedImage scaled = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
@@ -725,7 +775,7 @@ public class RenderService {
         BufferedImage full = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_RGB);
         fillRgbFromGlReadBuffer(full);
 
-        float quality = highQuality ? Math.max(0.85f, jpegQuality) : clampPreviewJpegQuality(previewJpegQuality);
+        float quality = highQuality ? Math.max(0.85f, jpegQuality) : effectivePreviewJpegQuality(false);
         return encodeJpeg(full, quality);
     }
 
