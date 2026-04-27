@@ -79,6 +79,8 @@ public class RenderService {
     private volatile boolean needsRender = true;
     private String currentModelId = null;
     private float centerX = 0, centerY = 0, centerZ = 0;
+    /** Половина диагонали AABB после центрирования — для дистанции камеры и frustum. */
+    private float modelBoundingRadius = 1f;
     private volatile int highQualityFrames = 0;
     private volatile long framesRendered = 0;
     private volatile boolean glInfoLogged = false;
@@ -227,17 +229,20 @@ public class RenderService {
 
                     gl2.glMatrixMode(GL2.GL_PROJECTION);
                     gl2.glLoadIdentity();
-                    glu.gluPerspective(45.0, (double) renderWidth / renderHeight, 0.1, 100.0);
+                    double camDist = Math.max(modelBoundingRadius * 2.8, 0.15);
+                    double zNear = Math.max(camDist * 0.008, 0.01);
+                    double zFar = Math.max(camDist * 50.0, modelBoundingRadius * 30.0 + 50.0);
+                    glu.gluPerspective(45.0, (double) renderWidth / renderHeight, zNear, zFar);
                     gl2.glMatrixMode(GL2.GL_MODELVIEW);
                     gl2.glLoadIdentity();
 
-                    double radius = 20.0;
                     double az = Math.toRadians(currentAzimuth);
                     double el = Math.toRadians(currentElevation);
-                    double x = radius * Math.cos(el) * Math.sin(az);
-                    double y = radius * Math.sin(el);
-                    double z = radius * Math.cos(el) * Math.cos(az);
-                    glu.gluLookAt(x, y, z, centerX, centerY, centerZ, 0, 1, 0);
+                    double x = camDist * Math.cos(el) * Math.sin(az);
+                    double y = camDist * Math.sin(el);
+                    double z = camDist * Math.cos(el) * Math.cos(az);
+                    // После glTranslate(-center) модель в начале координат — смотреть на (0,0,0), не на centerX/Y/Z в OBJ.
+                    glu.gluLookAt(x, y, z, 0, 0, 0, 0, 1, 0);
 
                     if (currentModel != null && vboId != 0 && vboVertexCount > 0) {
                         gl2.glPushMatrix();
@@ -431,6 +436,11 @@ public class RenderService {
         centerX = (minX + maxX) / 2f;
         centerY = (minY + maxY) / 2f;
         centerZ = (minZ + maxZ) / 2f;
+        float dx = maxX - minX;
+        float dy = maxY - minY;
+        float dz = maxZ - minZ;
+        float diag = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        modelBoundingRadius = Math.max(diag * 0.5f, 1e-4f);
     }
 
     private int quantizeAngle(double angle) {
