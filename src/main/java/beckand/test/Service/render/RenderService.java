@@ -60,6 +60,12 @@ public class RenderService {
     /** Качество JPEG для превью при вращении (0.35–0.95). Финальный кадр по-прежнему от render.jpeg.quality. */
     @Value("${render.preview.quality:0.84}")
     private float previewJpegQuality;
+    /** 0 = без лимита. Иначе отказ в загрузке при превышении (защита софтверного GL от зависаний). */
+    @Value("${render.max-triangle-count:0}")
+    private long maxTriangleCount;
+    /** Отсечение невидимых задних граней — заметно дешевле для закрытых мешей. */
+    @Value("${render.back-face-culling:true}")
+    private boolean backFaceCulling;
 
     private static final int MAX_RENDER_SIZE = 2048;
 
@@ -173,6 +179,13 @@ public class RenderService {
                     logGlInfoOnce(gl2);
                     gl2.glClearColor(0.06f, 0.06f, 0.08f, 1.0f);
                     gl2.glEnable(GL2.GL_DEPTH_TEST);
+                    if (backFaceCulling) {
+                        gl2.glEnable(GL2.GL_CULL_FACE);
+                        gl2.glCullFace(GL.GL_BACK);
+                        gl2.glFrontFace(GL.GL_CCW);
+                    } else {
+                        gl2.glDisable(GL2.GL_CULL_FACE);
+                    }
                     gl2.glEnable(GL2.GL_LIGHTING);
                     gl2.glEnable(GL2.GL_NORMALIZE);
                     gl2.glShadeModel(GL2.GL_SMOOTH);
@@ -420,6 +433,27 @@ public class RenderService {
         fb.put(v.getX()).put(v.getY()).put(v.getZ());
     }
 
+    /** Число треугольников после триангуляции n-угольников (как в VBO). */
+    private static long countTriangles(Obj model) {
+        long triCount = 0;
+        for (int i = 0; i < model.getNumFaces(); i++) {
+            ObjFace f = model.getFace(i);
+            int n = f.getNumVertices();
+            if (n >= 3) triCount += (long) (n - 2);
+        }
+        return triCount;
+    }
+
+    private void validateTriangleBudget(Obj model) throws IOException {
+        if (maxTriangleCount <= 0 || model == null) return;
+        long n = countTriangles(model);
+        if (n > maxTriangleCount) {
+            throw new IOException(
+                    "Слишком плотная сетка: " + n + " треугольников (лимит " + maxTriangleCount
+                            + "). Упростите модель в Blender (Modifier → Decimate) или увеличьте render.max-triangle-count в настройках.");
+        }
+    }
+
     private void updateModelBounds() {
         if (currentModel == null) return;
         float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
@@ -517,6 +551,7 @@ public class RenderService {
             currentModel = ObjReader.read(modelStream);
             if (currentModel.getNumFaces() == 0 || currentModel.getNumVertices() == 0)
                 throw new IOException("Модель не содержит вершин или граней");
+            validateTriangleBudget(currentModel);
             currentModelId = objectKey;
             updateModelBounds();
             pendingUploadModel = currentModel;
@@ -579,6 +614,7 @@ public class RenderService {
             currentModel = ObjReader.read(modelStream);
             if (currentModel.getNumFaces() == 0 || currentModel.getNumVertices() == 0)
                 throw new IOException("Модель не содержит вершин или граней");
+            validateTriangleBudget(currentModel);
             currentModelId = objectKey;
             updateModelBounds();
             pendingUploadModel = currentModel;
@@ -648,6 +684,7 @@ public class RenderService {
             currentModel = ObjReader.read(modelStream);
             if (currentModel.getNumFaces() == 0 || currentModel.getNumVertices() == 0)
                 throw new IOException("Модель не содержит вершин или граней");
+            validateTriangleBudget(currentModel);
             currentModelId = objectKey;
             updateModelBounds();
             needsRender = true;

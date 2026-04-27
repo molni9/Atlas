@@ -427,13 +427,31 @@
 
             const loader = new OBJLoader();
             const group = loader.parse(text);
+            let triangleBudget = 0;
+            group.traverse((child) => {
+                if (child.isMesh && child.geometry) {
+                    const g = child.geometry;
+                    const idx = g.index;
+                    if (idx) triangleBudget += idx.count / 3;
+                    else {
+                        const pos = g.getAttribute('position');
+                        if (pos) triangleBudget += pos.count / 3;
+                    }
+                }
+            });
+            const heavyMesh = triangleBudget > 200000;
+            const veryHeavyMesh = triangleBudget > 600000;
+            if (three.renderer) {
+                const pr = veryHeavyMesh ? 1 : Math.min(window.devicePixelRatio || 1, heavyMesh ? 1.25 : 2);
+                three.renderer.setPixelRatio(pr);
+            }
             group.traverse((child) => {
                 if (child.isMesh) {
                     child.material = new THREE.MeshStandardMaterial({
                         color: 0xaeb8d8,
                         metalness: 0.15,
                         roughness: 0.55,
-                        flatShading: false
+                        flatShading: heavyMesh
                     });
                 }
             });

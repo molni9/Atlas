@@ -30,6 +30,8 @@ services:
       RENDER_PREVIEW_SCALE: "0.85"
       RENDER_PREVIEW_QUALITY: "0.88"
       RENDER_STREAM_FPS: 15
+      # Опционально: лимит треугольников (Spring: render.max-triangle-count), иначе 0 = без лимита
+      # RENDER_MAX_TRIANGLE_COUNT: "800000"
     depends_on:
       minio:
         condition: service_started
