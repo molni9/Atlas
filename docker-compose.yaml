@@ -1,12 +1,16 @@
+# Запуск: docker compose up --build
+# Серверный рендер по умолчанию на GPU (NVIDIA): gpus: all, LIBGL_ALWAYS_SOFTWARE=0.
+#
+# Если нет NVIDIA / Docker не видит GPU: закомментируйте у app строку «gpus: all»,
+# поставьте LIBGL_ALWAYS_SOFTWARE: "1" и удалите строки NVIDIA_* и __GLX_VENDOR_LIBRARY_NAME.
+
 services:
   app:
     image: atlas-app:latest
     build:
       context: .
-      # Dockerfile: Xvfb + Mesa — стабильный серверный рендер (без Stub). GPU: см. комментарий ниже.
       dockerfile: Dockerfile
-    # Для NVIDIA: раскомментируйте runtime и образ nvidia, уберите LIBGL_ALWAYS_SOFTWARE=1
-    # runtime: nvidia
+    gpus: all
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -19,18 +23,17 @@ services:
       SPRING_DATASOURCE_PASSWORD: password
       SERVER_PORT: 8010
       DISPLAY: ":99"
-      # 1 = после неудачного EGL использовать GLX на Xvfb (как в ENTRYPOINT Dockerfile)
       USE_XVFB: "1"
-      # Софтверный OpenGL на сервере — надёжно в Docker; для настоящей GPU снимите эту строку
-      LIBGL_ALWAYS_SOFTWARE: "1"
+      LIBGL_ALWAYS_SOFTWARE: "0"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: graphics,utility,compute
+      __GLX_VENDOR_LIBRARY_NAME: nvidia
       RENDER_GL_SAMPLES: "0"
       RENDER_WIDTH: 1280
       RENDER_HEIGHT: 720
-      # Превью при вращении: 0.85–1.0 заметно чётче; 1.0 = без уменьшения перед JPEG
       RENDER_PREVIEW_SCALE: "0.85"
       RENDER_PREVIEW_QUALITY: "0.88"
       RENDER_STREAM_FPS: 15
-      # Опционально: лимит треугольников (Spring: render.max-triangle-count), иначе 0 = без лимита
       # RENDER_MAX_TRIANGLE_COUNT: "800000"
     depends_on:
       minio:
@@ -43,7 +46,6 @@ services:
 
   minio:
     container_name: minio
-    # cpuv1 нужен для старых CPU без x86-64-v2 (иначе: "Fatal glibc error: CPU does not support x86-64-v2")
     image: minio/minio:RELEASE.2024-01-18T22-51-28Z-cpuv1
     ports:
       - "9000:9000"
@@ -77,10 +79,10 @@ services:
     image: canyan/janus-gateway:latest
     container_name: janus
     ports:
-      - "8088:8088"   # HTTP API
-      - "8188:8188"   # WebSocket
-      - "5004:5004/udp"  # RTP video
-      - "10000-10200:10000-10200/udp"  # RTP/ICE диапазон
+      - "8088:8088"
+      - "8188:8188"
+      - "5004:5004/udp"
+      - "10000-10200:10000-10200/udp"
     volumes:
       - ./janus-config:/etc/janus
     environment:
