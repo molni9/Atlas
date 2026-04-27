@@ -92,6 +92,8 @@ public class RenderService {
     private float modelBoundingRadius = 1f;
     /** Треугольников после триангуляции (как VBO); для адаптивного превью и шага угла. */
     private volatile long loadedModelTriangleCount = 0;
+    /** Множитель дистанции камеры (1 = по умолчанию; меньше — ближе, больше — дальше). Поле zoom в WebSocket. */
+    private volatile double cameraDistanceScale = 1.0;
     private volatile int highQualityFrames = 0;
     private volatile long framesRendered = 0;
     private volatile boolean glInfoLogged = false;
@@ -247,7 +249,8 @@ public class RenderService {
 
                     gl2.glMatrixMode(GL2.GL_PROJECTION);
                     gl2.glLoadIdentity();
-                    double camDist = Math.max(modelBoundingRadius * 2.8, 0.15);
+                    double camDistBase = Math.max(modelBoundingRadius * 2.8, 0.15);
+                    double camDist = camDistBase * cameraDistanceScale;
                     double zNear = Math.max(camDist * 0.008, 0.01);
                     double zFar = Math.max(camDist * 50.0, modelBoundingRadius * 30.0 + 50.0);
                     glu.gluPerspective(45.0, (double) renderWidth / renderHeight, zNear, zFar);
@@ -593,7 +596,7 @@ public class RenderService {
         ensurePixelBufferCapacity();
         int qAz = quantizeAngle(azimuth);
         int qEl = quantizeAngle(elevation);
-        String cacheKey = objectKey + ":" + qAz + ":" + qEl + ":" + renderWidth + "x" + renderHeight;
+        String cacheKey = objectKey + ":" + qAz + ":" + qEl + ":" + renderWidth + "x" + renderHeight + zoomCacheSuffix();
         byte[] cached = renderCache.get(cacheKey);
         if (cached != null) return cached;
 
@@ -639,6 +642,18 @@ public class RenderService {
         return out;
     }
 
+    /** Множитель дистанции камеры для серверного рендера (клиент: zoom в WebSocket). */
+    public void setCameraDistanceScale(double scale) {
+        if (Double.isNaN(scale) || Double.isInfinite(scale)) return;
+        if (scale < 0.2) scale = 0.2;
+        if (scale > 5.0) scale = 5.0;
+        this.cameraDistanceScale = scale;
+    }
+
+    private String zoomCacheSuffix() {
+        return ":z" + Math.round(cameraDistanceScale * 100.0);
+    }
+
     /** Модель уже в памяти и на GPU — повторно тянуть объект из MinIO не нужно (снижает нагрузку на S3). */
     public boolean isModelLoaded(String objectKey) {
         return objectKey != null && objectKey.equals(currentModelId) && currentModel != null && !stubMode && isInitialized;
@@ -652,7 +667,7 @@ public class RenderService {
         int qEl = quantizeAngle(elevation);
 
         if (finalFrame) {
-            String key = objectKey + ":" + qAz + ":" + qEl + ":" + renderWidth + "x" + renderHeight;
+            String key = objectKey + ":" + qAz + ":" + qEl + ":" + renderWidth + "x" + renderHeight + zoomCacheSuffix();
             byte[] cached = renderCache.get(key);
             if (cached != null) return cached;
         }
@@ -714,7 +729,7 @@ public class RenderService {
 
         byte[] out = encodeJpeg(toEncode, quality);
         if (finalFrame) {
-            String key = objectKey + ":" + qAz + ":" + qEl + ":" + renderWidth + "x" + renderHeight;
+            String key = objectKey + ":" + qAz + ":" + qEl + ":" + renderWidth + "x" + renderHeight + zoomCacheSuffix();
             if (renderCache.size() >= maxCacheEntries) {
                 Iterator<String> it = renderCache.keySet().iterator();
                 if (it.hasNext()) renderCache.remove(it.next());

@@ -171,7 +171,7 @@
 <div id="modelList">
     <h3>Модели</h3>
     <div class="mode-switch">
-        <p class="mode-hint">Основной режим Atlas: крутится и считается на <strong>сервере</strong>, в браузер идут только кадры (JPEG).</p>
+        <p class="mode-hint">Основной режим Atlas: крутится и считается на <strong>сервере</strong>, в браузер идут только кадры (JPEG). Колёсико мыши — приблизить / отдалить.</p>
         <label><input type="radio" name="viewMode" value="server" checked> Серверный рендер (WebSocket, GPU сервера)</label>
         <label><input type="radio" name="viewMode" value="webgl"> Локально в браузере (WebGL) — только для проверки без сервера</label>
     </div>
@@ -223,6 +223,7 @@
     const rotationState = {
         azimuth: 0,
         elevation: 0,
+        zoom: 1,
         velocityX: 0,
         velocityY: 0,
         isDragging: false,
@@ -231,6 +232,7 @@
         lastSentAzimuth: 0,
         lastSentElevation: 0
     };
+    let lastWheelSend = 0;
 
     /** Сервер: не более одного запроса без ответа — иначе кадры копятся в очереди WebSocket и растёт задержка. */
     let wsRenderInFlight = false;
@@ -348,6 +350,7 @@
         three.scene.add(dir);
 
         three.controls = new OrbitControls(three.camera, glCanvas);
+        three.controls.enableZoom = true;
         three.controls.enableDamping = true;
         three.controls.dampingFactor = 0.08;
 
@@ -601,6 +604,7 @@
 
         rotationState.azimuth = 0;
         rotationState.elevation = 0;
+        rotationState.zoom = 1;
         rotationState.velocityX = 0;
         rotationState.velocityY = 0;
         wsRenderInFlight = false;
@@ -666,6 +670,7 @@
                 type: 'rotate',
                 azimuth: Math.round(azimuth * 10) / 10,
                 elevation: Math.round(elevation * 10) / 10,
+                zoom: Math.round(rotationState.zoom * 1000) / 1000,
                 final: !!isFinal
             }));
             wsRenderInFlight = true;
@@ -734,6 +739,18 @@
         rotationState.lastFrameTime = now;
         requestAnimationFrame(updateFrame);
     }
+
+    viewer.addEventListener('wheel', (e) => {
+        if (viewMode !== 'server') return;
+        e.preventDefault();
+        const t = performance.now();
+        if (t - lastWheelSend < 45) return;
+        lastWheelSend = t;
+        const dir = Math.sign(e.deltaY) || 1;
+        const factor = dir > 0 ? 1.07 : 1 / 1.07;
+        rotationState.zoom = Math.min(4, Math.max(0.25, rotationState.zoom * factor));
+        sendRotate(rotationState.azimuth, rotationState.elevation, false);
+    }, { passive: false });
 
     viewer.addEventListener('mousedown', (e) => {
         if (viewMode !== 'server') return;

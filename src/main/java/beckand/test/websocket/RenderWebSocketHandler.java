@@ -47,6 +47,8 @@ public class RenderWebSocketHandler implements WebSocketHandler {
                 double azimuth = root.path("azimuth").asDouble(0);
                 double elevation = root.path("elevation").asDouble(0);
                 boolean finalFrame = root.path("final").asBoolean(false);
+                double zoom = root.path("zoom").asDouble(1.0);
+                renderService.setCameraDistanceScale(zoom);
 
                 // Рендер на сервере; при уже загруженной модели не дергаем MinIO (иначе 503 / rate limit).
                 long metaMs = 0;
@@ -67,8 +69,8 @@ public class RenderWebSocketHandler implements WebSocketHandler {
                 session.sendMessage(new BinaryMessage(jpeg));
                 long sendMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tSend0);
                 long allMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tAll0);
-                log.debug("WS rotate: session={} model={} final={} az={} el={} bytes={} metaMs={} renderMs={} sendMs={} totalMs={}",
-                        session.getId(), modelId, finalFrame, azimuth, elevation, jpeg.length, metaMs, renderMs, sendMs, allMs);
+                log.debug("WS rotate: session={} model={} final={} az={} el={} zoom={} bytes={} metaMs={} renderMs={} sendMs={} totalMs={}",
+                        session.getId(), modelId, finalFrame, azimuth, elevation, zoom, jpeg.length, metaMs, renderMs, sendMs, allMs);
             }
         } catch (Exception e) {
             if (isBenignClientDisconnect(e)) {
