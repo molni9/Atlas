@@ -1,0 +1,11 @@
+janus-gateway/
+**/.libs/
+**/*.la
+
+# Common noise
+.git/
+.idea/
+.DS_Store
+**/node_modules/
+**/build/
+**/dist/

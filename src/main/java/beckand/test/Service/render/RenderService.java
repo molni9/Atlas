@@ -142,7 +142,7 @@ public class RenderService {
             capabilities.setHardwareAccelerated(!softwareGl);
             capabilities.setDoubleBuffered(true);
             capabilities.setDepthBits(24);
-            int samples = Math.max(0, Math.min(16, renderGlSamples));
+            int samples = Math.max(0,Math.min(16, renderGlSamples));
             capabilities.setSampleBuffers(samples > 0);
             capabilities.setNumSamples(samples > 0 ? samples : 0);
             capabilities.setOnscreen(false);
